@@ -1,0 +1,12 @@
+[project]
+name = "databrain"
+version = "0.1.0"
+description = "Data Brain: 스스로 덜 보고, 밤마다 스스로 나아지는 실시간 데이터 파이프라인"
+requires-python = ">=3.12,<3.13"   # PyFlink 2.2.1은 3.13용 설치 파일이 없음 (2026-10-16 확인)
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

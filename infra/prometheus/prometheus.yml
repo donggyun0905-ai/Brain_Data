@@ -1,0 +1,8 @@
+# 화면용 지표 수집. 제어기는 이 값을 쓰지 않고 Kafka에서 1초마다 직접 읽는다 (ADR-0002, 운영 함정 #1).
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: kafka-lag
+    static_configs: [{ targets: ["kafka-exporter:9308"] }]
+  - job_name: flink
+    static_configs: [{ targets: ["jobmanager:9249", "taskmanager:9249"] }]

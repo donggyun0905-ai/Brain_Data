@@ -1,0 +1,6 @@
+# 재생기·제어기·시뮬레이터 (Python 3.12)
+confluent-kafka>=2.6
+duckdb>=1.1
+numpy>=2.0
+optuna>=4.0        # 수면 재생 후보 탐색 (2월)
+pytest>=8.0
