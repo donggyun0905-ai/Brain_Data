@@ -3,8 +3,8 @@
 #   batch : 야간 작업 때 (약 8GB) docker compose --profile core --profile batch up -d
 #   view  : 화면 개발·데모 때 (약 3GB)
 #
-# 주의: 이미지 버전은 2026-10 기준으로 적었지만 이 저장소를 만든 환경에서는 실제로 받아보지 못했다.
-#       1주차에 `docker compose pull`로 존재 여부를 확인하고, 없으면 가까운 버전으로 고정할 것 (docs/week1.md).
+# 이미지 태그는 2026-10-17에 모두 존재 확인 (docs/week1.md). MinIO만 batch 단계 전에 다시 확인.
+# 개발 PC에서는 docker-compose.local.yml을 겹쳐 쓴다 (ADR-0006).
 
 x-app: &app
   build: { context: ., dockerfile: infra/app/Dockerfile }
@@ -34,12 +34,17 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_LOG_RETENTION_HOURS: 168          # 7일. 수면 재생 원본은 Parquet 보관본에서 읽음
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:                            # 컨테이너 시작 ≠ 접속 가능. 준비된 뒤에 다른 서비스를 띄운다
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
     mem_limit: 1500m
 
   kafka-init:
     image: apache/kafka:4.1.0
     profiles: [core]
-    depends_on: [kafka]
+    depends_on: { kafka: { condition: service_healthy } }
     entrypoint: ["/bin/bash", "/scripts/create_topics.sh"]
     volumes: ["./infra/kafka:/scripts:ro"]
 
@@ -86,6 +91,8 @@ services:
   controller:
     <<: *app
     profiles: [core]
+    depends_on: { kafka-init: { condition: service_completed_successfully } }   # 토픽이 생긴 뒤 시작
+    restart: unless-stopped
     command: ["python", "-m", "databrain.controller.main", "--bootstrap", "kafka:9092", "--capacity", "${CAPACITY_EPS:-10000}"]
 
   replayer:                     # 상시 실행 아님: docker compose run --rm replayer <경로> --speed 100
