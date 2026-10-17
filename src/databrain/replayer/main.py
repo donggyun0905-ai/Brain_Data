@@ -67,7 +67,8 @@ def run(path: str, bootstrap: str, speed: float, bursts, prefix: str,
 def main() -> None:  # pragma: no cover
     ap = argparse.ArgumentParser()
     ap.add_argument("path")
-    ap.add_argument("--bootstrap", default="localhost:9092")
+    ap.add_argument("--bootstrap", default="localhost:29092",
+                    help="PC에서는 localhost:29092, 컨테이너 안에서는 kafka:9092")
     ap.add_argument("--speed", type=float, default=100.0)
     ap.add_argument("--burst", action="append", default=[], type=parse_burst)
     ap.add_argument("--topic-prefix", default="")

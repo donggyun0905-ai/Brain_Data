@@ -1,0 +1,798 @@
+<title>Data Brain 작동 원리</title>
+<meta name="description" content="트래픽이 폭증하면 덜 중요한 데이터를 스스로 골라 덜 보고, 밤마다 그날을 다시 재생하며 나아지는 실시간 파이프라인">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@700&family=IBM+Plex+Sans+KR:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* 레이아웃: 위에서 아래로 읽는 한 단 문서. 맨 위에 움직이는 파이프라인 모형, 밤 구간(수면 재생)만 어두운 띠로 구분 */
+:root {
+  --bg: #F1F3F7;
+  --surface: #FFFFFF;
+  --ink: #172033;
+  --muted: #586276;
+  --line: #D4D9E2;
+  --view: #3C6BC2;
+  --cart: #C27414;
+  --buy: #1B8A66;
+  --drop: #A9B1BE;
+  --accent: #5640C2;
+  --good: #1B8A66;
+  --warn: #B86A0E;
+  --crit: #C23A3A;
+  --night-bg: #1B2140;
+  --night-surface: #252C52;
+  --night-ink: #E8EAF6;
+  --night-muted: #A9AFD3;
+  --night-line: #3A4274;
+  --font-display: "Gowun Batang", "Nanum Myeongjo", "Batang", serif;
+  --font-body: "IBM Plex Sans KR", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --font-data: "JetBrains Mono", "D2Coding", Consolas, ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E121B; --surface: #171D2A; --ink: #E3E8F1; --muted: #9AA3B6; --line: #2A3346;
+    --view: #7FA5EE; --cart: #EBA650; --buy: #4CC79D; --drop: #556074; --accent: #A493F5;
+    --good: #4CC79D; --warn: #EBA650; --crit: #F07272;
+    --night-bg: #0A0D1A; --night-surface: #151A33; --night-ink: #E8EAF6; --night-muted: #9DA4CC; --night-line: #2B3260;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E121B; --surface: #171D2A; --ink: #E3E8F1; --muted: #9AA3B6; --line: #2A3346;
+  --view: #7FA5EE; --cart: #EBA650; --buy: #4CC79D; --drop: #556074; --accent: #A493F5;
+  --good: #4CC79D; --warn: #EBA650; --crit: #F07272;
+  --night-bg: #0A0D1A; --night-surface: #151A33; --night-ink: #E8EAF6; --night-muted: #9DA4CC; --night-line: #2B3260;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.7;
+  padding-inline: 16px; padding-block: 0;
+}
+.wrap { max-width: 1080px; margin: 0 auto; }
+.prose { max-width: 66ch; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 700; line-height: 1.3; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 3.1rem); letter-spacing: -0.01em; }
+h2 { font-size: clamp(1.5rem, 3.2vw, 2rem); }
+h3 { font-size: 1.2rem; }
+p { margin: 0; }
+.eyebrow { font-family: var(--font-data); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lead { font-size: 1.12rem; color: var(--muted); }
+code, .mono { font-family: var(--font-data); font-size: 0.88em; }
+code { background: color-mix(in srgb, var(--line) 45%, transparent); padding: 0.1em 0.35em; border-radius: 4px; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+section { padding-block: 56px; display: grid; gap: 24px; }
+section + section { border-top: 1px solid var(--line); }
+
+/* ---------- 머리 ---------- */
+.hero { padding-block: 48px 24px; display: grid; gap: 16px; }
+.hero h1 em { font-style: normal; color: var(--accent); }
+
+/* ---------- 모형 ---------- */
+.lab { display: grid; gap: 14px; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+button, .seg label {
+  font: 500 0.92rem var(--font-body); color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 14px; cursor: pointer;
+}
+button:hover, .seg label:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+button.primary:hover { filter: brightness(1.08); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { border: 0; border-radius: 0; }
+.seg label + input + label { border-left: 1px solid var(--line); }
+.seg input:checked + label { background: var(--ink); color: var(--bg); }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -2px; }
+.range { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--muted); }
+.range input { accent-color: var(--accent); width: 130px; }
+.range output { font-family: var(--font-data); color: var(--ink); min-width: 4.5em; }
+
+.stage { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.stage canvas { display: block; width: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.85rem; color: var(--muted); padding: 10px 14px; border-top: 1px solid var(--line); }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+
+.meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.meter { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; display: grid; gap: 2px; min-width: 0; }
+.meter .k { font-size: 0.8rem; color: var(--muted); }
+.meter .v { font-family: var(--font-data); font-size: 1.35rem; font-variant-numeric: tabular-nums; font-weight: 600; }
+.meter .s { font-size: 0.78rem; color: var(--muted); }
+.pill { display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 1px 8px; border-radius: 99px; border: 1px solid currentColor; }
+.st-good { color: var(--good); } .st-warn { color: var(--warn); } .st-crit { color: var(--crit); }
+.spark { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; display: grid; gap: 6px; }
+.spark canvas { width: 100%; height: 70px; display: block; }
+.note { font-size: 0.85rem; color: var(--muted); }
+
+/* ---------- 문제 ---------- */
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; align-items: start; }
+.two > * { min-width: 0; }
+.stat-line { display: grid; gap: 14px; }
+.bar-row { display: grid; grid-template-columns: 7.5em 1fr; gap: 10px; align-items: center; font-size: 0.92rem; }
+.bar-track { position: relative; height: 26px; }
+.bar { height: 100%; border-radius: 4px; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px;
+  font-family: var(--font-data); font-size: 0.8rem; font-weight: 600; color: var(--surface); min-width: 3.4em; }
+.bar.none { background: var(--crit); } .bar.step { background: var(--warn); } .bar.pred { background: var(--good); }
+.axis { position: relative; height: 18px; margin-left: calc(7.5em + 10px); font-family: var(--font-data); font-size: 0.7rem; color: var(--muted); }
+.axis span { position: absolute; transform: translateX(-50%); }
+.target { position: absolute; top: -4px; bottom: -4px; border-left: 2px dashed var(--muted); }
+
+/* ---------- 세 가지 생각 ---------- */
+.ideas { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.idea { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.idea .tag { font-family: var(--font-data); font-size: 0.75rem; color: var(--muted); }
+.idea p { font-size: 0.95rem; }
+.formula { font-family: var(--font-data); font-size: 0.82rem; background: var(--bg); border-radius: 8px; padding: 10px 12px; overflow-x: auto; white-space: pre; line-height: 1.6; }
+
+/* ---------- 샘플링 실험 ---------- */
+.sampler { display: grid; gap: 14px; }
+.users { display: flex; flex-wrap: wrap; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.user { display: flex; flex-wrap: wrap; gap: 2px; width: 40px; padding: 4px; border-radius: 6px; border: 1px solid var(--line); align-content: flex-start; transition: border-color .3s; }
+.user.heavy { width: 132px; border-style: dashed; }
+.user.whole { border-color: var(--ink); }
+.ev { width: 6px; height: 6px; border-radius: 1.5px; background: var(--view); transition: opacity .35s, transform .35s; }
+.ev.c { background: var(--cart); }
+.ev.off { opacity: 0.14; }
+.ev.new { animation: pop .6s ease-out; }
+@keyframes pop { 0% { transform: scale(2.2); } 100% { transform: scale(1); } }
+.results { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+
+/* ---------- 수면 재생 (밤 띠) ---------- */
+.night { background: var(--night-bg); color: var(--night-ink); border-radius: 16px; padding-inline: clamp(16px, 4vw, 40px); border-top: 0 !important; margin-block: 8px; }
+.night .lead, .night .note, .night .eyebrow { color: var(--night-muted); }
+.night code { background: var(--night-surface); }
+.cycle { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; counter-reset: step; list-style: none; padding: 0; margin: 0; }
+.cycle li { counter-increment: step; background: var(--night-surface); border: 1px solid var(--night-line); border-radius: 10px; padding: 12px 14px; font-size: 0.9rem; transition: border-color .4s, transform .4s; min-width: 0; }
+.cycle li::before { content: counter(step); font-family: var(--font-data); font-size: 0.75rem; color: var(--night-muted); display: block; }
+.cycle li strong { display: block; font-size: 0.98rem; }
+.cycle li.on { border-color: var(--night-ink); transform: translateY(-3px); }
+.chart-box { background: var(--night-surface); border: 1px solid var(--night-line); border-radius: 12px; padding: 14px; overflow-x: auto; }
+.chart-box svg { display: block; width: 100%; min-width: 320px; height: auto; }
+.chart-box text { font-family: var(--font-data); font-size: 11px; fill: var(--night-muted); }
+
+/* ---------- 구성·일정·용어 ---------- */
+.stack { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.stack div { padding: 12px 16px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); font-size: 0.92rem; min-width: 0; }
+.stack b { display: block; font-family: var(--font-data); font-size: 0.85rem; }
+.stack span { color: var(--muted); }
+.timeline { position: relative; display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; padding-top: 20px; }
+.timeline::before { content: ""; position: absolute; left: 0; right: 0; top: 7px; height: 2px; background: var(--line); }
+.tl { position: relative; font-size: 0.86rem; min-width: 0; }
+.tl::before { content: ""; position: absolute; top: -18px; left: 0; width: 12px; height: 12px; border-radius: 50%; background: var(--surface); border: 2px solid var(--muted); }
+.tl.now::before { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent); }
+.tl b { display: block; font-family: var(--font-data); font-size: 0.8rem; }
+.tl span { color: var(--muted); }
+@media (max-width: 640px) {
+  .timeline { grid-template-columns: 1fr; padding-top: 0; padding-left: 22px; }
+  .timeline::before { left: 5px; right: auto; top: 0; bottom: 0; width: 2px; height: auto; }
+  .tl::before { top: 5px; left: -22px; }
+}
+dl.terms { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 28px; margin: 0; }
+dl.terms div { min-width: 0; }
+dl.terms dt { font-weight: 600; }
+dl.terms dd { margin: 0; color: var(--muted); font-size: 0.92rem; }
+footer { padding-block: 32px 48px; border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ev, .cycle li, .user { transition: none; }
+  .ev.new { animation: none; }
+}
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <p class="eyebrow">데이터 엔지니어 포트폴리오 · 2026.10 – 2027.03 · 1인 프로젝트</p>
+  <h1>쏟아질 때는 <em>덜 보고</em>,<br>밤에는 <em>다시 본다</em></h1>
+  <p class="lead prose">Data Brain은 쇼핑몰에 사람이 갑자기 몰려도 대시보드 숫자가 늦어지지 않게 하는 실시간 데이터 파이프라인입니다. 바쁠 때는 덜 중요한 데이터를 스스로 골라 일부만 보고, 밤에는 그날 몰렸던 구간을 다시 돌려 보며 자기 처리 능력을 더 정확히 알아갑니다.</p>
+</header>
+
+<section class="lab" id="lab" aria-labelledby="lab-title" style="padding-top:8px">
+  <div class="prose" style="display:grid;gap:8px">
+    <h2 id="lab-title">직접 움직여 보기</h2>
+    <p>아래 그림은 실제 설계를 줄인 모형입니다. 점 하나가 이벤트 묶음입니다. <b>폭증 일으키기</b>를 누르고, 제어를 껐을 때와 켰을 때 Kafka에 쌓이는 양과 화면 지연이 어떻게 달라지는지 보세요.</p>
+  </div>
+  <div class="controls">
+    <button class="primary" id="burst" type="button">폭증 일으키기 (15초간 8배)</button>
+    <div class="seg" role="radiogroup" aria-label="제어 방식">
+      <input type="radio" name="ctl" id="ctl-off" value="off"><label for="ctl-off">제어 끄기</label>
+      <input type="radio" name="ctl" id="ctl-on" value="on" checked><label for="ctl-on">예측형 제어</label>
+    </div>
+    <label class="range" for="est">제어기가 아는 처리 능력
+      <input type="range" id="est" min="50" max="150" step="10" value="100">
+      <output id="est-out" for="est">실제의 100%</output>
+    </label>
+    <button id="pause" type="button" aria-pressed="false">일시정지</button>
+  </div>
+  <div class="stage" id="stage">
+    <canvas id="pipe" aria-label="재생기에서 Kafka, 거르기, Flink를 거쳐 대시보드로 가는 이벤트 흐름 애니메이션" role="img"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--view)"></i>조회</span>
+      <span><i style="background:var(--cart)"></i>장바구니</span>
+      <span><i style="background:var(--buy)"></i>구매 (절대 거르지 않음)</span>
+      <span><i style="background:var(--drop)"></i>걸러진 이벤트 (버리지 않고 보관)</span>
+      <span>거른 뒤 남은 점이 커지는 것은 남은 하나가 여러 개를 대신한다는 뜻(가중치 1/비율)입니다</span>
+    </div>
+  </div>
+  <div class="meters" aria-live="off">
+    <div class="meter"><span class="k">들어오는 양</span><span class="v" id="m-in">0</span><span class="s">건/초</span></div>
+    <div class="meter"><span class="k">Kafka에 밀린 양</span><span class="v" id="m-lag">0</span><span class="s">건</span></div>
+    <div class="meter"><span class="k">화면 숫자 지연</span><span class="v" id="m-fresh">0</span><span class="s"><span class="pill st-good" id="m-fresh-st">제때</span> 목표 5초 안</span></div>
+    <div class="meter"><span class="k">조회 통과 비율</span><span class="v" id="m-view">100%</span><span class="s">제어기가 1초마다 정함</span></div>
+    <div class="meter"><span class="k">장바구니 통과 비율</span><span class="v" id="m-cart">100%</span><span class="s">조회를 최소로 줄인 뒤에만 줄임</span></div>
+    <div class="meter"><span class="k">구매 처리 비율</span><span class="v">100%</span><span class="s">별도 작업, 항상 전부</span></div>
+  </div>
+  <div class="spark">
+    <span class="note">최근 90초 화면 숫자 지연 (점선 = 목표 5초)</span>
+    <canvas id="spark" aria-hidden="true"></canvas>
+  </div>
+  <p class="note prose">이 모형의 숫자는 이해를 돕기 위해 고른 값입니다. 처리 능력을 실제보다 크게 잡으면(예: 150%) 제어를 켜도 밀림이 남는데, 이 오차를 밤마다 고치는 것이 아래의 <a href="#sleep">수면 재생</a>입니다.</p>
+</section>
+
+<section aria-labelledby="problem-title">
+  <div class="two">
+    <div style="display:grid;gap:14px">
+      <p class="eyebrow">풀려는 문제</p>
+      <h2 id="problem-title">사람이 몰리면 숫자가 늦어진다</h2>
+      <p>타임딜이 시작되면 평소보다 몇 배 많은 클릭이 한꺼번에 들어옵니다. 처리하는 쪽의 능력은 그대로라서 못 처리한 데이터가 Kafka에 줄을 서고, 대시보드는 몇 분 전의 숫자를 보여 줍니다. 정작 가장 궁금한 순간에 가장 늦은 정보를 보게 되는 셈입니다.</p>
+      <p>서버를 늘리면 해결되지만 돈이 듭니다. 이 프로젝트는 반대로 묻습니다. <b>다 볼 수 없다면 무엇을 덜 볼지 시스템이 스스로 정할 수 있을까?</b></p>
+    </div>
+    <div class="stat-line">
+      <p class="eyebrow">사전 검증 시뮬레이션 · 화면 지연 p99 (가로축 로그 눈금)</p>
+      <div class="bar-row"><span>조절 없음</span><div class="bar-track"><div class="bar none" style="width:98.2%">810초</div></div></div>
+      <div class="bar-row"><span>단계형 제어</span><div class="bar-track"><div class="bar step" style="width:45.6%">1.9초</div></div></div>
+      <div class="bar-row"><span>예측형 제어</span><div class="bar-track"><div class="bar pred" style="width:20%">0.1초</div></div></div>
+      <div class="axis" aria-hidden="true">
+        <span style="left:0%">0.01</span><span style="left:20%">0.1</span><span style="left:40%">1</span><span style="left:60%">10</span><span style="left:80%">100</span><span style="left:100%">1000초</span>
+        <span class="target" style="left:54%"></span>
+      </div>
+      <p class="note">세 방식 모두 버린 양은 약 58%로 같습니다. 얼마나 버릴지는 처리 능력이 정하고, 제어 방식은 <b>언제</b> 버릴지를 정합니다. 미리 줄이면 줄이 생기지 않습니다. 점선은 목표 5초입니다. 출처: <code>sim/compare_controllers.py</code></p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="ideas-title">
+  <div class="prose" style="display:grid;gap:8px">
+    <p class="eyebrow">해결 방법</p>
+    <h2 id="ideas-title">세 가지 생각</h2>
+  </div>
+  <div class="ideas">
+    <article class="idea">
+      <span class="tag">설계 원칙 1 · vital_job.py</span>
+      <h3>구매는 따로, 전부</h3>
+      <p>매출은 1건만 틀려도 안 되는 숫자입니다. 그래서 구매 이벤트는 처음부터 다른 Kafka 토픽에 넣고 다른 Flink 작업이 처리합니다. 조회가 아무리 몰려도 구매 경로는 처리 자원을 나눠 쓰지 않습니다. 뇌로 치면 숨쉬기를 맡는 뇌간입니다.</p>
+    </article>
+    <article class="idea">
+      <span class="tag">설계 원칙 3·4 · controller/rate_model.py</span>
+      <h3>밀리기 전에 미리 줄인다</h3>
+      <p>제어기는 1초마다 Kafka에서 들어오는 속도와 밀린 양을 직접 읽고, 처리 능력에 맞는 통과 비율을 계산합니다. 줄을 본 뒤에 반응하지 않고, 줄이 생길 것을 계산해서 먼저 줄입니다. 내릴 때는 즉시, 올릴 때는 1초에 10%p씩 천천히 올립니다.</p>
+      <div class="formula">필요한 읽기 속도 = 유입 + 밀린 양 ÷ 2초
+읽은 이벤트당 여유 = 0.9 × 처리 능력 ÷ 필요 속도
+                   − 거르기 비용
+→ 조회부터 줄이고, 조회가 2%에 닿으면 장바구니</div>
+    </article>
+    <article class="idea">
+      <span class="tag">설계 원칙 5 · sampling/hashing.py</span>
+      <h3>통계가 틀어지지 않게 거른다</h3>
+      <p>아무렇게나 버리면 숫자가 왜곡됩니다. 일반 사용자는 사람 단위로 통째로 남기거나 빼서 "조회 → 장바구니" 흐름을 지키고, 활동량이 아주 많은 소수는 이벤트 단위로 거릅니다. 남긴 이벤트에는 그때의 비율을 실어 보내 1/비율로 원래 양을 추정합니다.</p>
+    </article>
+  </div>
+</section>
+
+<section aria-labelledby="sampling-title" class="sampler">
+  <div class="prose" style="display:grid;gap:8px">
+    <p class="eyebrow">샘플링 실험</p>
+    <h2 id="sampling-title">어떻게 거르느냐가 숫자를 바꾼다</h2>
+    <p>네모 하나가 이벤트 하나(파랑 조회, 주황 장바구니), 상자 하나가 사용자 한 명입니다. 점선 상자는 활동량 상위 사용자입니다. 방식과 비율을 바꿔 보면서 아래 두 숫자가 얼마나 틀리는지 보세요.</p>
+  </div>
+  <div class="controls">
+    <div class="seg" role="radiogroup" aria-label="샘플링 방식">
+      <input type="radio" name="mode" id="mode-event" value="event"><label for="mode-event">이벤트 무작위</label>
+      <input type="radio" name="mode" id="mode-user" value="user"><label for="mode-user">사용자 해시</label>
+      <input type="radio" name="mode" id="mode-mixed" value="mixed" checked><label for="mode-mixed">혼합 (이 프로젝트)</label>
+    </div>
+    <label class="range" for="srate">남기는 비율
+      <input type="range" id="srate" min="5" max="100" step="5" value="20">
+      <output id="srate-out" for="srate">20%</output>
+    </label>
+    <button id="reseed" type="button">다른 사용자들로 다시 뽑기</button>
+  </div>
+  <div class="users" id="users" aria-label="사용자별 이벤트 그림"></div>
+  <div class="results">
+    <div class="meter"><span class="k">전체 조회 수 (추정 ÷ 실제)</span><span class="v" id="r-total">-</span><span class="s" id="r-total-s">-</span></div>
+    <div class="meter"><span class="k">장바구니까지 간 사용자 비율</span><span class="v" id="r-funnel">-</span><span class="s" id="r-funnel-s">-</span></div>
+    <div class="meter"><span class="k">이 방식의 약점</span><span class="v" style="font-size:1rem;font-family:var(--font-body);font-weight:500" id="r-why">-</span></div>
+  </div>
+  <p class="note prose">비율을 올려 보면 이미 남아 있던 사용자는 계속 남고 새 사용자만 추가됩니다. 해시 값이 비율보다 작으면 남기는 방식이라 5%에 뽑힌 사람은 10%에도 항상 들어 있습니다. 덕분에 비율이 바뀌어도 보고 있던 사람의 흐름이 중간에 끊기지 않습니다. 실제 시뮬레이션 기준으로 이벤트 무작위는 퍼널을 최대 +16%p 왜곡했고, 사용자 해시는 총량 오차가 최대 18%였습니다. 혼합 방식은 퍼널 오차 3.3%p, 총량 오차 5.5%(각각 95번째 백분위)였습니다. 출처: <code>sim/compare_sampling.py</code></p>
+</section>
+
+<section class="night" id="sleep" aria-labelledby="sleep-title">
+  <div class="wrap" style="display:grid;gap:24px">
+    <div class="prose" style="display:grid;gap:8px">
+      <p class="eyebrow">수면 재생 · 2027년 1~2월 구현 예정</p>
+      <h2 id="sleep-title">밤마다 그날을 다시 산다</h2>
+      <p class="lead">제어기는 "처리 능력이 초당 몇 건인가"라는 숫자 하나에 기대고 있습니다. 이 숫자가 틀리면 너무 많이 버리거나 줄이 다시 생깁니다. 그래서 사람이 잠자며 낮의 기억을 정리하듯, 시스템도 밤마다 그날 몰렸던 구간을 원래 속도로 다시 돌려 보며 이 숫자를 고칩니다.</p>
+    </div>
+    <ol class="cycle" id="cycle">
+      <li><strong>낮: 기록</strong>제어기의 모든 판단을 <code>log.decisions</code> 토픽에 남기고, 걸러진 이벤트도 Parquet로 보관</li>
+      <li><strong>밤: 재생</strong>폭증 구간을 원래 간격 그대로 <code>replay.</code> 토픽에 다시 보냄</li>
+      <li><strong>측정</strong>같은 부하에서 실제로 초당 몇 건을 처리했는지 잼</li>
+      <li><strong>고침</strong>처리 능력·여유율·올리는 속도를 Optuna로 찾아 수정</li>
+      <li><strong>적용</strong>다음 날 아침 제어기가 고친 숫자로 시작</li>
+    </ol>
+    <div class="chart-box">
+      <svg viewBox="0 0 640 230" role="img" aria-label="밤이 지날수록 추정 처리 능력이 실제 처리 능력에 가까워지는 예시 그래프">
+        <g stroke="var(--night-line)" stroke-width="1">
+          <line x1="60" y1="30" x2="620" y2="30"/><line x1="60" y1="80" x2="620" y2="80"/>
+          <line x1="60" y1="130" x2="620" y2="130"/><line x1="60" y1="180" x2="620" y2="180"/>
+        </g>
+        <text x="52" y="34" text-anchor="end">1,600</text><text x="52" y="84" text-anchor="end">1,400</text>
+        <text x="52" y="134" text-anchor="end">1,200</text><text x="52" y="184" text-anchor="end">1,000</text>
+        <line x1="60" y1="55" x2="620" y2="55" stroke="var(--night-ink)" stroke-width="1.5" stroke-dasharray="5 5"/>
+        <text x="618" y="48" text-anchor="end" style="fill:var(--night-ink)">실제 처리 능력 1,500건/초</text>
+        <polyline id="est-line" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"
+          points="60,205 140,135 220,95 300,75 380,64 460,58.5 540,56 620,55"/>
+        <g fill="var(--accent)">
+          <circle cx="60" cy="205" r="4"/><circle cx="140" cy="135" r="4"/><circle cx="220" cy="95" r="4"/><circle cx="300" cy="75" r="4"/>
+          <circle cx="380" cy="64" r="4"/><circle cx="460" cy="58.5" r="4"/><circle cx="540" cy="56" r="4"/><circle cx="620" cy="55" r="4"/>
+        </g>
+        <circle id="est-dot" cx="60" cy="205" r="8" fill="none" stroke="var(--accent)" stroke-width="2"/>
+        <g text-anchor="middle">
+          <text x="60" y="222">첫날</text><text x="140" y="222">1밤</text><text x="220" y="222">2밤</text><text x="300" y="222">3밤</text>
+          <text x="380" y="222">4밤</text><text x="460" y="222">5밤</text><text x="540" y="222">6밤</text><text x="620" y="222">7밤</text>
+        </g>
+        <text x="70" y="200" style="fill:var(--accent)">제어기가 믿는 처리 능력</text>
+      </svg>
+    </div>
+    <p class="note prose">그래프의 값은 동작 방식을 보여 주기 위한 예시입니다. 실제 수렴 속도는 2월 실험(H2)에서 측정해 3회 반복 중앙값으로 기록합니다.</p>
+  </div>
+</section>
+
+<section aria-labelledby="stack-title">
+  <div class="prose" style="display:grid;gap:8px">
+    <p class="eyebrow">구성</p>
+    <h2 id="stack-title">무엇으로 만드나</h2>
+    <p>관리형 클라우드 서비스 없이 Docker로 직접 띄웁니다. 전체 예산은 약 20만 원입니다. 데이터는 실제 쇼핑몰 행동 로그(REES46, 한 달에 약 4천만 건)를 재생기로 원래 시간 간격대로 흘려 보냅니다.</p>
+  </div>
+  <div class="stack">
+    <div><b>재생기</b><span>Parquet를 원래 간격·배속대로 Kafka에 전송, 폭증 구간 재현</span></div>
+    <div><b>Kafka</b><span>이벤트 대기열. 키는 user_id, 7일 보관</span></div>
+    <div><b>PyFlink</b><span>거르기·1분 집계 작업과 구매 전용 작업</span></div>
+    <div><b>제어기 (Python)</b><span>1초마다 밀림을 읽고 통과 비율 발행</span></div>
+    <div><b>ClickHouse</b><span>집계 결과 저장, 대시보드 조회</span></div>
+    <div><b>Prometheus · Grafana</b><span>상태 화면 (제어에는 쓰지 않음)</span></div>
+    <div><b>DuckDB · Parquet · Iceberg</b><span>원본 정리와 걸러진 데이터 보관</span></div>
+    <div><b>Spark · Airflow · Optuna</b><span>밤 재계산과 수면 재생 후보 탐색</span></div>
+  </div>
+</section>
+
+<section aria-labelledby="plan-title">
+  <div class="prose" style="display:grid;gap:8px">
+    <p class="eyebrow">일정</p>
+    <h2 id="plan-title">어디까지 왔나</h2>
+    <p>메시지 형식, 혼합 샘플링, 예측형 제어 계산, 재생 시간표는 구현과 단위 테스트(17개)를 마쳤습니다. 지금은 Docker 위에서 실제 데이터를 Kafka까지 흘려보는 1단계입니다.</p>
+  </div>
+  <div class="timeline">
+    <div class="tl now"><b>10/19 – 11/8</b><span>1단계: 환경, 재생기, 데이터 준비</span></div>
+    <div class="tl"><b>12/6</b><span>E1 기준선: 처리 능력 실측</span></div>
+    <div class="tl"><b>1/31</b><span>H1·H2 검증: 제어기, 샘플링</span></div>
+    <div class="tl"><b>2월</b><span>수면 재생 구현</span></div>
+    <div class="tl"><b>2/28</b><span>기능 동결</span></div>
+    <div class="tl"><b>3/28</b><span>완성, 결과 정리</span></div>
+  </div>
+</section>
+
+<section aria-labelledby="terms-title">
+  <h2 id="terms-title">처음 보는 단어</h2>
+  <dl class="terms">
+    <div><dt>Kafka</dt><dd>들어온 이벤트를 순서대로 줄 세워 두는 대기열. 처리하는 쪽이 느려도 데이터를 잃지 않습니다.</dd></div>
+    <div><dt>Flink</dt><dd>흘러가는 데이터를 실시간으로 계산하는 엔진. 여기서는 1분 단위 집계를 합니다.</dd></div>
+    <div><dt>밀림 (lag)</dt><dd>Kafka에 들어왔지만 아직 처리하지 못한 이벤트 수.</dd></div>
+    <div><dt>신선도</dt><dd>이벤트가 일어난 뒤 대시보드에 반영되기까지 걸린 시간. 짧을수록 좋습니다.</dd></div>
+    <div><dt>p99</dt><dd>100번 중 가장 나쁜 1번을 뺀 값. 평균보다 "최악에 가까운 경우"를 보여 줍니다.</dd></div>
+    <div><dt>샘플링</dt><dd>전부 대신 일부만 보고 전체를 추정하는 것.</dd></div>
+    <div><dt>해시</dt><dd>같은 입력에 항상 같은 값을 내는 계산. 같은 사용자는 언제나 같은 판정을 받습니다.</dd></div>
+    <div><dt>퍼널</dt><dd>조회 → 장바구니 → 구매로 이어지는 단계별 비율.</dd></div>
+  </dl>
+</section>
+
+<footer>
+  설계 근거는 저장소의 <code>docs/adr/</code>, 사전 검증은 <code>sim/</code>에 있습니다. 이 페이지의 시뮬레이션 수치는 실제 측정이 아닌 사전 검증 결과이며, 실측은 12월 E1 이후 갱신합니다.
+</footer>
+
+</div>
+
+<script>
+(() => {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const root = document.documentElement;
+  const css = n => getComputedStyle(root).getPropertyValue(n).trim();
+  let COL = {};
+  function readColors() {
+    for (const k of ['bg','surface','ink','muted','line','view','cart','buy','drop','accent','good','warn','crit']) COL[k] = css('--' + k);
+    COL.font = css('--font-body'); COL.mono = css('--font-data');
+  }
+  readColors();
+
+  /* ================= 파이프라인 모형 ================= */
+  // 제어 계산은 src/databrain/controller/rate_model.py 를 그대로 옮긴 것
+  const M = { filterCost: 0.05, margin: 0.9, target: 2, minView: 0.02, minCart: 0.25, maxRise: 0.1 };
+  const clip = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+  function computeRates(cap, inC, inV, bC, bV, prev) {
+    const needC = Math.max(inC, 0) + Math.max(bC, 0) / M.target;
+    const needV = Math.max(inV, 0) + Math.max(bV, 0) / M.target;
+    const R = needC + needV;
+    let cart, view;
+    if (R <= 0) { cart = 1; view = 1; }
+    else {
+      const sc = needC / R, sv = 1 - sc;
+      const per = M.margin * cap / R - M.filterCost;
+      const wantView = sv > 0 ? (per - sc) / sv : 1;
+      if (wantView >= M.minView) { cart = 1; view = clip(wantView, M.minView, 1); }
+      else { view = M.minView; cart = clip(sc > 0 ? (per - sv * M.minView) / sc : 1, M.minCart, 1); }
+    }
+    if (view > prev.view) view = Math.min(view, prev.view + M.maxRise);
+    if (cart > prev.cart) cart = Math.min(cart, prev.cart + M.maxRise);
+    return { cart, view };
+  }
+
+  const S = {
+    t: 0, qC: 0, qV: 0, rates: { cart: 1, view: 1 }, control: true, est: 1,
+    C: 1500, base: { view: 920, cart: 65, buy: 15 }, burstMul: 8, burstUntil: -1, nextAuto: 5,
+    lastCtl: 0, arrC: 0, arrV: 0, inRate: 1000, readRate: 0, fresh: 0, hist: [], paused: reduce,
+  };
+  function triggerBurst() { S.burstUntil = S.t + 15; S.nextAuto = S.t + 60; }
+
+  // 점(이벤트 묶음) 하나가 나타내는 이벤트 수. 종류별로 보기 좋게 다르게 잡음
+  const E = { view: 115, cart: 10, buy: 4 };
+  const V = { dots: [], acc: { view: 0, cart: 0, buy: 0 }, rel: { view: 0, cart: 0 }, pile: { view: 0, cart: 0 }, dashPulse: 0, archPulse: 0 };
+
+  function step(dt) {
+    S.t += dt;
+    if (S.t >= S.nextAuto) triggerBurst();
+    const mul = S.t < S.burstUntil ? S.burstMul : 1;
+    const inV = S.base.view * mul, inC = S.base.cart * mul, inB = S.base.buy * mul;
+    S.qV += inV * dt; S.qC += inC * dt; S.arrV += inV * dt; S.arrC += inC * dt;
+    const q = S.qV + S.qC;
+    let rV = 0, rC = 0;
+    if (q > 0) {
+      const rc = S.control ? S.rates.cart : 1, rv = S.control ? S.rates.view : 1;
+      const k = (S.qC * rc + S.qV * rv) / q;
+      const reads = Math.min(q, S.C * dt / (M.filterCost + k));
+      rV = reads * S.qV / q; rC = reads * S.qC / q;
+      S.qV -= rV; S.qC -= rC;
+    }
+    S.readRate = S.readRate * 0.92 + ((rV + rC) / dt) * 0.08;
+    S.fresh = (S.qV + S.qC) / Math.max(S.readRate, 1);
+    if (S.t - S.lastCtl >= 1) {
+      const el = S.t - S.lastCtl;
+      const ic = S.arrC / el, iv = S.arrV / el;
+      S.inRate = ic + iv + inB;
+      S.arrC = 0; S.arrV = 0; S.lastCtl = S.t;
+      S.rates = S.control ? computeRates(S.C * S.est, ic, iv, S.qC, S.qV, S.rates) : { cart: 1, view: 1 };
+      S.hist.push(S.fresh); if (S.hist.length > 90) S.hist.shift();
+    }
+    // 시각화: 들어오는 점
+    spawn('view', inV * dt); spawn('cart', inC * dt); spawn('buy', inB * dt);
+    // 시각화: Kafka에서 읽혀 나가는 점
+    release('view', rV); release('cart', rC);
+  }
+  function jitter() { return (Math.random() - 0.5) * 12; }
+  function spawn(lane, n) {
+    V.acc[lane] += n / E[lane];
+    while (V.acc[lane] >= 1) {
+      V.acc[lane] -= 1;
+      const path = lane === 'buy' ? ['src', 'btIn', 'btOut', 'vital', 'dash'] : ['src', 'tubeIn', 'tubeOut'];
+      V.dots.push({ lane, path, i: 0, f: 0, jx: jitter(), jy: jitter(), stage: lane === 'buy' ? 'buy' : 'in', w: 1 });
+    }
+  }
+  function release(lane, n) {
+    V.rel[lane] += n / E[lane];
+    while (V.rel[lane] >= 1 && V.pile[lane] > 0) {
+      V.rel[lane] -= 1; V.pile[lane] -= 1;
+      const rate = S.control ? S.rates[lane] : 1;
+      const kept = Math.random() < rate;
+      V.dots.push({ lane, path: kept ? ['tubeOut', 'gate', 'flink', 'dash'] : ['tubeOut', 'gate', 'archive'],
+        i: 0, f: 0, jx: jitter(), jy: jitter(), stage: 'out', kept, w: Math.min(2.4, Math.sqrt(1 / Math.max(rate, 0.02))) });
+    }
+    V.rel[lane] = Math.min(V.rel[lane], 3);
+  }
+
+  // 배치: u = 흐름 방향, v = 가로지르는 방향 (0~1)
+  const NODES = {
+    src: [0.07, 0.64], tubeIn: [0.19, 0.64], tubeOut: [0.39, 0.64], gate: [0.535, 0.64], flink: [0.705, 0.64], dash: [0.905, 0.64],
+    archive: [0.535, 0.9], ctl: [0.46, 0.34], btIn: [0.19, 0.12], btOut: [0.39, 0.12], vital: [0.705, 0.12],
+  };
+  const LABEL = {
+    src: ['쇼핑몰 로그', '재생기'], gate: ['거르기', '머리말만 읽음'], flink: ['Flink 집계', '1분 단위'],
+    dash: ['대시보드', 'ClickHouse'], archive: ['보관함', 'Parquet·밤에 재계산'], ctl: ['제어기', ''], vital: ['구매 전용', 'vital_job'],
+  };
+  const cv = document.getElementById('pipe'), cx = cv.getContext('2d');
+  let W = 800, H = 340, vertical = false, BW = 104, BH = 50;
+  function resize() {
+    const r = cv.parentElement.getBoundingClientRect();
+    W = Math.max(280, r.width);
+    vertical = W < 620;
+    H = vertical ? Math.round(W * 1.45) : Math.round(Math.max(320, W * 0.4));
+    BW = vertical ? 86 : 108; BH = vertical ? 44 : 50;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + 'px';
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  function P(name) {
+    const [u, v] = NODES[name];
+    let x = vertical ? v * W : u * W, y = vertical ? u * H : v * H;
+    x = clip(x, BW / 2 + 6, W - BW / 2 - 6);
+    return { x, y };
+  }
+
+  function rrect(x, y, w, h, r) { cx.beginPath(); cx.roundRect ? cx.roundRect(x, y, w, h, r) : cx.rect(x, y, w, h); }
+  function box(name, opt = {}) {
+    const p = P(name);
+    rrect(p.x - BW / 2, p.y - BH / 2, BW, BH, 8);
+    cx.fillStyle = COL.surface; cx.fill();
+    cx.lineWidth = opt.strong ? 2 : 1; cx.strokeStyle = opt.stroke || COL.line; cx.stroke();
+    const [a, b] = LABEL[name];
+    cx.textAlign = 'center'; cx.textBaseline = 'middle';
+    cx.fillStyle = COL.ink; cx.font = `600 ${vertical ? 12 : 13}px ${COL.font}`;
+    cx.fillText(a, p.x, p.y - (b || opt.sub ? 8 : 0));
+    const sub = opt.sub || b;
+    if (sub) { cx.fillStyle = opt.subColor || COL.muted; cx.font = `${vertical ? 10.5 : 11.5}px ${opt.subMono ? COL.mono : COL.font}`; cx.fillText(sub, p.x, p.y + 10); }
+  }
+  function tube(aName, bName, thick, fill, label, lagText) {
+    const a = P(aName), b = P(bName);
+    const x0 = Math.min(a.x, b.x) - (vertical ? thick / 2 : 0), y0 = Math.min(a.y, b.y) - (vertical ? 0 : thick / 2);
+    const w = vertical ? thick : Math.abs(b.x - a.x), h = vertical ? Math.abs(b.y - a.y) : thick;
+    rrect(x0, y0, w, h, thick / 2); cx.fillStyle = COL.bg; cx.fill();
+    if (fill > 0) {
+      cx.save(); rrect(x0, y0, w, h, thick / 2); cx.clip();
+      cx.fillStyle = COL.crit; cx.globalAlpha = 0.22;
+      if (vertical) cx.fillRect(x0, b.y - h * fill, w, h * fill); else cx.fillRect(b.x - w * fill, y0, w * fill, h);
+      cx.restore();
+    }
+    rrect(x0, y0, w, h, thick / 2); cx.strokeStyle = COL.muted; cx.lineWidth = 1.2; cx.stroke();
+    cx.fillStyle = COL.muted; cx.font = `11px ${COL.mono}`;
+    if (vertical) { cx.textAlign = 'right'; cx.textBaseline = 'middle'; cx.fillText(label, x0 - 6, (a.y + b.y) / 2); }
+    else { cx.textAlign = 'center'; cx.textBaseline = 'bottom'; cx.fillText(label, (a.x + b.x) / 2, y0 - 5); }
+    if (lagText) {
+      cx.fillStyle = fill > 0.05 ? COL.crit : COL.muted; cx.font = `600 11.5px ${COL.mono}`;
+      if (vertical) { cx.textAlign = 'right'; cx.fillText(lagText, x0 - 6, (a.y + b.y) / 2 + 16); }
+      else { cx.textAlign = 'center'; cx.textBaseline = 'top'; cx.fillText(lagText, (a.x + b.x) / 2, y0 + h + 5); }
+    }
+  }
+  function line(a, b, dash, color, width = 1.2) {
+    cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y);
+    cx.setLineDash(dash || []); cx.strokeStyle = color || COL.line; cx.lineWidth = width; cx.stroke(); cx.setLineDash([]);
+  }
+  const fmt = n => Math.round(n).toLocaleString('ko-KR');
+  const pct = r => (r >= 0.995 ? '100' : (r * 100).toFixed(r < 0.1 ? 1 : 0)) + '%';
+
+  function draw(dt) {
+    cx.clearRect(0, 0, W, H);
+    // 연결선
+    for (const [a, b] of [['src', 'tubeIn'], ['tubeOut', 'gate'], ['gate', 'flink'], ['flink', 'dash'], ['gate', 'archive'],
+                          ['src', 'btIn'], ['btOut', 'vital'], ['vital', 'dash']]) line(P(a), P(b));
+    const c = P('ctl'), tm = { x: (P('tubeIn').x + P('tubeOut').x) / 2, y: (P('tubeIn').y + P('tubeOut').y) / 2 };
+    const on = S.control;
+    line(c, tm, [4, 4], on ? COL.accent : COL.line);
+    line(c, P('gate'), [4, 4], on ? COL.accent : COL.line);
+    // Kafka 통
+    const backlog = S.qV + S.qC;
+    const fill = backlog < 1 ? 0 : Math.min(1, Math.log10(1 + backlog) / 5);
+    tube('tubeIn', 'tubeOut', vertical ? 30 : 34, fill, 'Kafka · 조회/장바구니', `밀림 ${fmt(backlog)}건`);
+    tube('btIn', 'btOut', 16, 0, 'Kafka · 구매', '');
+    // 상자
+    box('src');
+    box('gate', { strong: on, stroke: on ? COL.accent : COL.line });
+    box('flink');
+    const fr = S.fresh, frCol = fr <= 5 ? COL.good : fr <= 30 ? COL.warn : COL.crit;
+    box('dash', { sub: `지연 ${fr < 0.1 ? '0.1' : fr.toFixed(fr < 10 ? 1 : 0)}초`, subColor: frCol, subMono: true, strong: true, stroke: frCol });
+    box('archive');
+    box('vital', { stroke: COL.buy });
+    box('ctl', { sub: on ? `조회 ${pct(S.rates.view)} · 장바구니 ${pct(S.rates.cart)}` : '꺼짐', subMono: on, subColor: on ? COL.accent : COL.muted,
+                 strong: on, stroke: on ? COL.accent : COL.line });
+    // 점
+    const speed = Math.max(80, (vertical ? H : W) * 0.13);
+    const keep = [];
+    for (const d of V.dots) {
+      if (dt > 0) {
+        let rem = speed * dt;
+        while (rem > 0 && d.i < d.path.length - 1) {
+          const a = P(d.path[d.i]), b = P(d.path[d.i + 1]);
+          const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+          const left = (1 - d.f) * len;
+          if (rem < left) { d.f += rem / len; rem = 0; } else { rem -= left; d.i++; d.f = 0; }
+        }
+      }
+      if (d.i >= d.path.length - 1) {
+        const end = d.path[d.path.length - 1];
+        if (d.stage === 'in') V.pile[d.lane]++;
+        else if (end === 'dash') V.dashPulse = 1;
+        else if (end === 'archive') V.archPulse = 1;
+        continue;
+      }
+      keep.push(d);
+      const a = P(d.path[d.i]), b = P(d.path[d.i + 1]);
+      const x = a.x + (b.x - a.x) * d.f + d.jx * 0.5, y = a.y + (b.y - a.y) * d.f + d.jy * 0.5;
+      const past = d.stage === 'out' && d.i >= 1;
+      const dropped = past && !d.kept;
+      cx.beginPath();
+      cx.arc(x, y, (past && d.kept ? 3 * d.w : 3), 0, Math.PI * 2);
+      cx.fillStyle = dropped ? COL.drop : COL[d.lane];
+      cx.globalAlpha = past && d.kept && d.w > 1.05 ? 0.75 : 1;
+      cx.fill(); cx.globalAlpha = 1;
+    }
+    V.dots = keep;
+    // 도착 반짝임
+    for (const [n, k, col] of [['dash', 'dashPulse', frCol], ['archive', 'archPulse', COL.drop]]) {
+      if (V[k] > 0) {
+        const p = P(n); cx.globalAlpha = V[k] * 0.5;
+        rrect(p.x - BW / 2 - 4, p.y - BH / 2 - 4, BW + 8, BH + 8, 11); cx.strokeStyle = col; cx.lineWidth = 2; cx.stroke();
+        cx.globalAlpha = 1; V[k] = Math.max(0, V[k] - dt * 2.5);
+      }
+    }
+    // 폭증 표시
+    if (S.t < S.burstUntil) {
+      const p = P('src');
+      cx.fillStyle = COL.crit; cx.font = `600 12px ${COL.font}`; cx.textAlign = 'center'; cx.textBaseline = 'bottom';
+      cx.fillText(`폭증 중 ×${S.burstMul} (${Math.ceil(S.burstUntil - S.t)}초)`, p.x, p.y - BH / 2 - 6);
+    }
+  }
+
+  // 지표
+  const $ = id => document.getElementById(id);
+  function meters() {
+    $('m-in').textContent = fmt(S.inRate);
+    $('m-lag').textContent = fmt(S.qV + S.qC);
+    const fr = S.fresh;
+    $('m-fresh').textContent = (fr < 0.1 ? '<0.1' : fr.toFixed(fr < 10 ? 1 : 0)) + '초';
+    const st = $('m-fresh-st');
+    st.className = 'pill ' + (fr <= 5 ? 'st-good' : fr <= 30 ? 'st-warn' : 'st-crit');
+    st.textContent = fr <= 5 ? '제때' : fr <= 30 ? '늦음' : '많이 늦음';
+    $('m-view').textContent = pct(S.control ? S.rates.view : 1);
+    $('m-cart').textContent = pct(S.control ? S.rates.cart : 1);
+  }
+  const sp = $('spark'), sx = sp.getContext('2d');
+  function spark() {
+    const r = sp.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    const w = r.width, h = 70;
+    if (sp.width !== Math.round(w * dpr)) { sp.width = Math.round(w * dpr); sp.height = h * dpr; }
+    sx.setTransform(dpr, 0, 0, dpr, 0, 0); sx.clearRect(0, 0, w, h);
+    const data = S.hist, maxV = Math.max(10, ...data) * 1.1;
+    const y = v => h - 4 - (v / maxV) * (h - 10);
+    sx.setLineDash([4, 4]); sx.strokeStyle = COL.muted; sx.lineWidth = 1;
+    sx.beginPath(); sx.moveTo(0, y(5)); sx.lineTo(w, y(5)); sx.stroke(); sx.setLineDash([]);
+    if (data.length < 2) return;
+    const x = i => w - (data.length - 1 - i) * (w / 89);
+    sx.beginPath(); data.forEach((v, i) => i ? sx.lineTo(x(i), y(v)) : sx.moveTo(x(i), y(v)));
+    sx.lineTo(x(data.length - 1), h); sx.lineTo(x(0), h); sx.closePath();
+    sx.fillStyle = COL.accent; sx.globalAlpha = 0.12; sx.fill(); sx.globalAlpha = 1;
+    sx.beginPath(); data.forEach((v, i) => i ? sx.lineTo(x(i), y(v)) : sx.moveTo(x(i), y(v)));
+    sx.strokeStyle = COL.accent; sx.lineWidth = 1.8; sx.stroke();
+    const lv = data[data.length - 1];
+    sx.beginPath(); sx.arc(x(data.length - 1), y(lv), 3.2, 0, Math.PI * 2);
+    sx.fillStyle = lv <= 5 ? COL.good : lv <= 30 ? COL.warn : COL.crit; sx.fill();
+    sx.fillStyle = COL.muted; sx.font = `10.5px ${COL.mono}`; sx.textAlign = 'left'; sx.textBaseline = 'top';
+    sx.fillText(`최대 ${Math.round(maxV / 1.1)}초`, 2, 2);
+  }
+
+  // 조작
+  $('burst').addEventListener('click', () => { triggerBurst(); if (S.paused) togglePause(); });
+  document.querySelectorAll('input[name=ctl]').forEach(r => r.addEventListener('change', e => {
+    S.control = e.target.value === 'on'; if (!S.control) S.rates = { cart: 1, view: 1 };
+  }));
+  $('est').addEventListener('input', e => { S.est = +e.target.value / 100; $('est-out').textContent = `실제의 ${e.target.value}%`; });
+  function togglePause() { S.paused = !S.paused; $('pause').textContent = S.paused ? '재생' : '일시정지'; $('pause').setAttribute('aria-pressed', S.paused); }
+  $('pause').addEventListener('click', togglePause);
+  if (S.paused) { $('pause').textContent = '재생'; $('pause').setAttribute('aria-pressed', 'true'); }
+
+  // 첫 화면이 비어 보이지 않도록 몇 초 미리 돌려 둠
+  resize();
+  for (let i = 0; i < 240; i++) { step(1 / 60); draw(1 / 60); }
+  draw(0); meters(); spark();
+
+  let last = performance.now(), acc = 0, colorTick = 0;
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (!S.paused) step(dt);
+    draw(S.paused ? 0 : dt);
+    acc += dt; colorTick += dt;
+    if (acc > 0.25) { meters(); spark(); acc = 0; }
+    if (colorTick > 1) { readColors(); colorTick = 0; }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  new ResizeObserver(() => { resize(); draw(0); spark(); }).observe(cv.parentElement);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); draw(0); spark(); });
+
+  /* ================= 샘플링 실험 ================= */
+  function rng(seed) {
+    let s = seed >>> 0;
+    return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  const SM = { seed: 7, rate: 0.2, mode: 'mixed', users: [] };
+  function build() {
+    const r = rng(SM.seed), users = [];
+    const heavyAt = new Set([5, 17, 28, 39]);
+    for (let i = 0; i < 44; i++) {
+      const heavy = heavyAt.has(i);
+      const nv = heavy ? 60 + Math.floor(r() * 50) : 2 + Math.floor(r() * 8);
+      const nc = heavy ? 2 + Math.floor(r() * 4) : (r() < 0.3 ? 1 + Math.floor(r() * 2) : 0);
+      const events = [];
+      for (let j = 0; j < nv; j++) events.push({ c: false, h: r() });
+      for (let j = 0; j < nc; j++) events.splice(Math.floor(r() * (events.length + 1)), 0, { c: true, h: r() });
+      users.push({ heavy, uh: r(), events, el: null });
+    }
+    const box = $('users'); box.textContent = '';
+    for (const u of users) {
+      const d = document.createElement('div'); d.className = 'user' + (u.heavy ? ' heavy' : '');
+      for (const e of u.events) { const s = document.createElement('span'); s.className = 'ev' + (e.c ? ' c' : ''); e.el = s; e.on = null; d.appendChild(s); }
+      u.el = d; box.appendChild(d);
+    }
+    SM.users = users;
+  }
+  function keepEv(u, e) {
+    const r = SM.rate;
+    if (r >= 1) return true;
+    if (SM.mode === 'event') return e.h < r;
+    if (SM.mode === 'user') return u.uh < r;
+    return u.heavy ? e.h < r : u.uh < r;
+  }
+  const WHY = {
+    event: '한 사람의 조회와 장바구니가 따로따로 빠져 "조회 → 장바구니" 흐름이 끊깁니다. 전환율이 낮게 나옵니다.',
+    user: '활동량이 많은 사람 한 명이 들어오느냐 빠지느냐에 따라 전체 조회 수가 크게 출렁입니다.',
+    mixed: '일반 사용자는 통째로, 많이 보는 소수는 이벤트 단위로 걸러 두 약점을 함께 줄입니다.',
+  };
+  function apply() {
+    let trueV = 0, keptV = 0, users = 0, usersCart = 0, seenUsers = 0, seenCart = 0;
+    for (const u of SM.users) {
+      let hasV = false, hasC = false, kV = false, kC = false;
+      for (const e of u.events) {
+        const k = keepEv(u, e);
+        if (!e.c) { trueV++; hasV = true; if (k) { keptV++; kV = true; } }
+        else { hasC = true; if (k) kC = true; }
+        if (e.on !== k) {
+          e.el.classList.toggle('off', !k);
+          if (k && e.on === false && !reduce) { e.el.classList.remove('new'); void e.el.offsetWidth; e.el.classList.add('new'); }
+          e.on = k;
+        }
+      }
+      const whole = SM.mode === 'user' || (SM.mode === 'mixed' && !u.heavy);
+      u.el.classList.toggle('whole', whole && SM.rate < 1 && u.uh < SM.rate);
+      if (hasV) { users++; if (hasC) usersCart++; }
+      if (kV) { seenUsers++; if (kC) seenCart++; }
+    }
+    const est = keptV / SM.rate, err = (est - trueV) / trueV * 100;
+    $('r-total').textContent = `${fmt(est)} ÷ ${fmt(trueV)}`;
+    const et = $('r-total-s'); et.textContent = `오차 ${err >= 0 ? '+' : ''}${err.toFixed(1)}%`;
+    et.className = 's ' + (Math.abs(err) <= 8 ? 'st-good' : Math.abs(err) <= 20 ? 'st-warn' : 'st-crit');
+    const tc = usersCart / users * 100, ec = seenUsers ? seenCart / seenUsers * 100 : 0, dp = ec - tc;
+    $('r-funnel').textContent = `${ec.toFixed(0)}% (실제 ${tc.toFixed(0)}%)`;
+    const ef = $('r-funnel-s'); ef.textContent = `차이 ${dp >= 0 ? '+' : ''}${dp.toFixed(1)}%p`;
+    ef.className = 's ' + (Math.abs(dp) <= 5 ? 'st-good' : Math.abs(dp) <= 12 ? 'st-warn' : 'st-crit');
+    $('r-why').textContent = WHY[SM.mode];
+  }
+  document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', e => { SM.mode = e.target.value; apply(); }));
+  $('srate').addEventListener('input', e => { SM.rate = +e.target.value / 100; $('srate-out').textContent = e.target.value + '%'; apply(); });
+  $('reseed').addEventListener('click', () => { SM.seed = (SM.seed * 7919 + 13) % 100003; build(); apply(); });
+  build(); apply();
+
+  /* ================= 수면 재생 순환 ================= */
+  const steps = [...document.querySelectorAll('#cycle li')];
+  const pts = [[60, 205], [140, 135], [220, 95], [300, 75], [380, 64], [460, 58.5], [540, 56], [620, 55]];
+  const dot = document.getElementById('est-dot');
+  let si = 0, night = 0;
+  function tick() {
+    steps.forEach((s, i) => s.classList.toggle('on', i === si));
+    if (si === 4) { night = (night + 1) % pts.length; dot.setAttribute('cx', pts[night][0]); dot.setAttribute('cy', pts[night][1]); }
+    si = (si + 1) % steps.length;
+  }
+  if (!reduce) { tick(); setInterval(tick, 1300); } else { steps[0].classList.add('on'); }
+})();
+</script>

@@ -1,7 +1,7 @@
 """
 제어기 실행 루프: 1초마다 밀림을 읽고, 통과 비율을 계산해 제어 토픽에 발행한다.
 
-    python -m databrain.controller.main --bootstrap localhost:9092 --capacity 10000
+    python -m databrain.controller.main --bootstrap localhost:29092 --capacity 10000
 
 제어 토픽 메시지는 버전 번호를 가진다 (운영 함정 #5).
 Flink는 더 높은 버전만 받아들이고, 마지막 값은 체크포인트에 저장된다.
@@ -22,7 +22,8 @@ TOPIC_CONTROL, TOPIC_DECISIONS = "control.rates", "log.decisions"
 
 def main() -> None:  # pragma: no cover - 실제 브로커 필요
     ap = argparse.ArgumentParser()
-    ap.add_argument("--bootstrap", default="localhost:9092")
+    ap.add_argument("--bootstrap", default="localhost:29092",
+                    help="PC에서는 localhost:29092, 컨테이너 안에서는 kafka:9092")
     ap.add_argument("--group", default="flink-main", help="Flink 메인 작업의 소비자 그룹")
     ap.add_argument("--capacity", type=float, required=True, help="E1에서 측정한 처리 능력 (이벤트/초)")
     ap.add_argument("--period", type=float, default=1.0)

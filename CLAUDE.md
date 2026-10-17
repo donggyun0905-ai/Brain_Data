@@ -29,6 +29,12 @@
 - 시뮬레이션: 조절 없음 신선도 p99 810초 / 단계형 1.9초 / 예측형 0.1초. 버린 양은 셋 다 약 58% (처리 능력이 결정)
 - 샘플링: 이벤트 무작위는 퍼널을 최대 +16%p 왜곡, 사용자 해시는 총량 오차 최대 18%, 혼합 방식이 둘 다 해결
 
+## 개발 PC에서 확인한 사실 (2026-10-17, 자세한 내용은 docs/week1.md)
+- Windows 11, PC 메모리 15.4GB, Docker(WSL2) 할당 8GB → core 전체(한도 합 약 11GB)는 그대로 못 띄움
+- make 없음 → PyCharm 실행 구성(.idea/runConfigurations) 사용. PC에서 Kafka 주소는 `localhost:29092`
+- 이미지 태그 전부 존재 확인. Flink 커넥터는 `5.0.0-2.2`, Flink 이미지 안 Python 3.12.3
+- 재생기 단일 프로세스 최대 약 39,000건/초 (3회 중앙값, 범위 36,000~48,000)
+
 ## 폴더
 ```
 src/databrain/
@@ -48,6 +54,7 @@ sim/                      사전 검증 시뮬레이션 3종
 infra/                    Docker, Kafka 토픽, ClickHouse, Prometheus
 docs/adr/                 기술 결정 기록
 docs/week1.md             첫 주 체크리스트
+docs/explainer.html       처음 보는 사람용 설명 페이지 (움직이는 모형 포함)
 ```
 
 ## 명령

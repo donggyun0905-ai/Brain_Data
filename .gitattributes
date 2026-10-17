@@ -1,0 +1,7 @@
+# 컨테이너(리눅스) 안에서 실행되는 파일은 Windows에서 받아도 줄 끝을 LF로 유지한다.
+# CRLF가 되면 bash가 '/bin/bash^M'을 찾다가 실패한다 (kafka-init 토픽 생성 등).
+*.sh          text eol=lf
+Dockerfile    text eol=lf
+*.yml         text eol=lf
+*.sql         text eol=lf
+Makefile      text eol=lf
