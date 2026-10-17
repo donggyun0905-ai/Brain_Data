@@ -17,6 +17,7 @@ services:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         jobmanager.memory.process.size: 900m
+        metrics.fetcher.update-interval: 1s
     mem_limit: 1100m
 
   taskmanager:

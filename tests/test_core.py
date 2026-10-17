@@ -4,7 +4,7 @@ import random
 import pytest
 
 from databrain import wire
-from databrain.controller.lag import Snapshot, backlog, in_rate
+from databrain.controller.lag import Snapshot, backlog, dead_reckon, drain_rate, in_flight, in_rate, parse_offsets
 from databrain.controller.rate_model import CapacityModel, Rates, compute_rates
 from databrain.replayer.faults import inject
 from databrain.replayer.schedule import build_wall_clock
@@ -118,6 +118,39 @@ def test_backlog_and_in_rate():
     assert backlog(a) == 10 and backlog(b) == 170
     assert in_rate(a, b) == pytest.approx(120.0)
     assert in_rate(None, b) == 0.0
+
+
+def test_backlog_prefers_flink_position_and_falls_back_per_partition():
+    s = Snapshot(0.0, {0: 100, 1: 100}, {0: 10, 1: 20}, processed={0: 95})
+    assert backlog(s) == 5 + 80                       # 파티션 1은 Flink 값이 없어 커밋 위치 사용
+    assert backlog(s, use_processed=False) == 90 + 80
+
+
+def test_parse_flink_offsets():
+    m = [{"id": "0.Source__src_view[1].KafkaSourceReader.topic.events_view.partition.3.currentOffset", "value": "41"},
+         {"id": "0.Source__src_view[1].KafkaSourceReader.topic.events_view.partition.4.currentOffset", "value": "-1"},
+         {"id": "0.Source__src_view[1].KafkaSourceReader.topic.replay_events_view.partition.0.currentOffset", "value": "9"},
+         {"id": "0.Source__src_view[1].KafkaSourceReader.topic.events_view.partition.3.committedOffset", "value": "7"}]
+    assert parse_offsets(m, ["events.view", "events.cart"]) == {"events.view": {3: 42}, "events.cart": {}}
+
+
+def test_in_flight_subtracts_control_messages():
+    assert in_flight({"events.view": 900, "events.cart": 100}, control_out=3, filter_in=3) == {"events.view": 900, "events.cart": 100}
+    assert in_flight({"events.view": 900, "events.cart": 100}, control_out=3, filter_in=1003) == {"events.view": 0, "events.cart": 0}
+
+
+def test_dead_reckoning_removes_what_flink_has_drained_since():
+    m = CapacityModel(capacity_eps=1000)
+    r = Rates()                                       # 다 통과: 이벤트 하나에 1 + 거르기 0.05
+    assert drain_rate(m, r, 0, 1000) == pytest.approx(1000 / 1.05)
+    bc, bv = dead_reckon(m, r, 100, 900, age_s=0.5)
+    assert bc + bv == pytest.approx(1000 - 500 / 1.05)
+    assert bc / bv == pytest.approx(100 / 900)        # 두 경로는 쌓인 비중대로 줄어듦
+    assert dead_reckon(m, r, 100, 900, age_s=60) == (0.0, 0.0)
+    # Flink가 멈춰도 오래된 측정으로 밀림을 0으로 착각하지 않도록 경과 시간 상한
+    bc, bv = dead_reckon(m, r, 0, 100_000, age_s=600, max_age_s=15)
+    assert bv == pytest.approx(100_000 - 15_000 / 1.05)
+    assert dead_reckon(m, r, 0, 0, age_s=5) == (0, 0)
 
 
 # ---------- 재생 시간표

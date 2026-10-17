@@ -14,6 +14,7 @@ Flink 메인 경로 (장바구니·조회): 읽으면서 거르기 → 1분 집�
 from __future__ import annotations
 
 import json
+import os
 import time
 
 from pyflink.common import Types
@@ -107,6 +108,6 @@ def build(env: StreamExecutionEnvironment, prefix: str = "") -> None:
 if __name__ == "__main__":
     import sys
     env = StreamExecutionEnvironment.get_execution_environment()
-    env.enable_checkpointing(10_000)
+    env.enable_checkpointing(int(os.environ.get("CHECKPOINT_MS", "10000")))
     build(env, prefix=sys.argv[1] if len(sys.argv) > 1 else "")
     env.execute("databrain-main")

@@ -54,9 +54,13 @@ services:
     command: jobmanager
     ports: ["8081:8081"]
     environment:
+      # 이미지 기본 메모리 1600m는 mem_limit 1500m를 넘어서 1200m로 줄임 (2026-10-17 확인)
+      # 지표 모으는 주기 1초: 제어기가 REST로 처리 위치를 읽는다 (기본 10초, ADR-0008)
+      # 주의: 아래 블록 안에는 '#' 주석을 쓰면 안 된다. Flink가 값의 일부로 읽어 시작에 실패함 (2026-10-17 확인)
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
-        jobmanager.memory.process.size: 1200m   # 이미지 기본값 1600m는 mem_limit 1500m를 넘음 (2026-10-17 확인)
+        jobmanager.memory.process.size: 1200m
+        metrics.fetcher.update-interval: 1s
         metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
         metrics.reporter.prom.port: 9249
     volumes: ["./src:/opt/databrain/src:ro"]
@@ -93,7 +97,8 @@ services:
     profiles: [core]
     depends_on: { kafka-init: { condition: service_completed_successfully } }   # 토픽이 생긴 뒤 시작
     restart: unless-stopped
-    command: ["python", "-m", "databrain.controller.main", "--bootstrap", "kafka:9092", "--capacity", "${CAPACITY_EPS:-10000}"]
+    command: ["python", "-m", "databrain.controller.main", "--bootstrap", "kafka:9092", "--flink-rest", "http://jobmanager:8081",
+              "--capacity", "${CAPACITY_EPS:-10000}"]
 
   replayer:                     # 상시 실행 아님: docker compose run --rm replayer <경로> --speed 100
     <<: *app

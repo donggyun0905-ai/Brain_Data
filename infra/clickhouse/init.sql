@@ -43,16 +43,19 @@ FROM databrain.purchase_minute_q;
 -- ---------- 제어기 판단 기록 (꿈 일기·뇌 화면의 재료)
 CREATE TABLE IF NOT EXISTS databrain.decisions_q (
     at_ms UInt64, in_cart_eps Float64, in_view_eps Float64, backlog_cart UInt64, backlog_view UInt64,
+    raw_backlog_cart UInt64, raw_backlog_view UInt64, signal String, age_s Float64,
     cart Float64, view Float64, version UInt64
 ) ENGINE = Kafka SETTINGS kafka_broker_list = 'kafka:9092', kafka_topic_list = 'log.decisions',
   kafka_group_name = 'ch-decisions', kafka_format = 'JSONEachRow';
 
 CREATE TABLE IF NOT EXISTS databrain.decisions (
     at DateTime64(3), in_cart_eps Float64, in_view_eps Float64, backlog_cart UInt64, backlog_view UInt64,
+    raw_backlog_cart UInt64, raw_backlog_view UInt64,   -- 추측 항법 전 측정값 (ADR-0008)
+    signal LowCardinality(String), age_s Float64,       -- 처리 위치를 어디서 읽었나(flink/commit), 몇 초 묵었나
     cart Float64, view Float64, version UInt64
 ) ENGINE = MergeTree ORDER BY at;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS databrain.decisions_mv TO databrain.decisions AS
 SELECT fromUnixTimestamp64Milli(toInt64(at_ms)) AS at, in_cart_eps, in_view_eps, backlog_cart, backlog_view,
-       cart, view, version
+       raw_backlog_cart, raw_backlog_view, signal, age_s, cart, view, version
 FROM databrain.decisions_q;

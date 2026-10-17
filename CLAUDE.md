@@ -15,7 +15,8 @@
 2. 거르는 판단은 메시지 머리말만 읽는다 (`wire.peek`). 본문 JSON은 통과한 것만 파싱
    머리말: `user_id ⇥ event_id ⇥ event_ms ⇥ ingest_ms ⇥ JSON` (ADR-0005, 0007)
 3. Kafka에 쌓인 데이터를 **읽을 때** 현재 비율로 거른다
-4. 제어기는 Kafka에서 1초마다 밀림을 직접 읽는다. Prometheus(15초 주기)를 제어에 쓰지 않는다
+4. 제어기는 1초마다 밀림을 직접 읽는다: 끝 위치는 Kafka, 처리 위치는 Flink REST + 추측 항법, 커밋 위치는 대비책 (ADR-0008).
+   Prometheus(15초 주기)를 제어에 쓰지 않는다
 5. 혼합 샘플링: 상위 사용자는 이벤트 단위, 나머지는 겹치는 사용자 해시. 남긴 이벤트에 비율을 실어 1/비율로 집계
 6. Kafka 키는 user_id. 상품·카테고리 집계는 소금(salt) 2단계 집계
 7. 걸러진 데이터도 버리지 않는다 (Kafka 7일 + Parquet/Iceberg 보관 → 밤에 재계산)
@@ -39,6 +40,13 @@
 - **PyFlink `from_source`는 Python TimestampAssigner를 오류 없이 무시한다** → 워터마크는 `flink_jobs/watermarks.py`의 SQL 소스로 (ADR-0007)
 - vital_job·main_job 가짜 데이터로 실행·정답 대조 통과 (따라잡기 포함, 조회 30% 거르기 추정 오차 -0.9%)
 
+## 제어기 밀림 신호 (2026-10-18, ADR-0008)
+- Flink 커밋 위치는 실측 7~9초 늦다. 체크포인트를 1초로 줄여도 같다 → 처리 위치는 Flink REST currentOffset(+1)
+- Flink REST 지표는 기본 10초마다 갱신 → `metrics.fetcher.update-interval: 1s`
+- `FLINK_PROPERTIES` 블록 안에 `#` 주석 금지 (Flink가 값으로 읽어 시작 실패)
+- 제어기 버전은 시작 시각(ms)부터 센다 (0부터 세면 재시작 후 Flink가 새 비율을 무시)
+- 실제 확인: 밀림 착각 8초 → 0초, 비율 회복 17초 → 5초. 비교 실험은 `--signal commit`, 도구는 `tools/`
+
 ## 폴더
 ```
 src/databrain/
@@ -46,7 +54,7 @@ src/databrain/
   sampling/hashing.py     혼합 샘플링 판단, 가중치
   sampling/heavy.py       상위 사용자 판별 (Count-Min Sketch)
   controller/rate_model.py 예측형 비율 계산 (순수 함수, 테스트 있음)
-  controller/lag.py       Kafka 밀림·유입 속도 계산
+  controller/lag.py       밀림·유입 속도 계산, Flink REST 처리 위치, 추측 항법
   controller/main.py      1초 제어 루프
   replayer/prepare.py     REES46 CSV → 시간순 Parquet (DuckDB)
   replayer/schedule.py    배속·폭증 시간표
@@ -54,7 +62,8 @@ src/databrain/
   replayer/main.py        Kafka로 재생
   flink_jobs/main_job.py  장바구니·조회 경로 (뼈대, 11월 실행 검증)
   flink_jobs/vital_job.py 구매 경로 (뼈대)
-sim/                      사전 검증 시뮬레이션 3종
+sim/                      사전 검증 시뮬레이션 (제어기 신호 비교 compare_lag_signals.py 포함)
+tools/                    실제 스택 측정 도구 (밀림 신호 실측, 제어기 비교)
 infra/                    Docker, Kafka 토픽, ClickHouse, Prometheus
 docs/adr/                 기술 결정 기록
 docs/week1.md             첫 주 체크리스트
@@ -68,7 +77,7 @@ docs/explainer.html       처음 보는 사람용 설명 페이지 (움직이는
 
 ## 현재 단계와 다음 할 일
 - 단계: 1단계 (환경·재생기·데이터 준비, ~11/8)
-- 다음: REES46 실제 데이터 준비·실측(사용자가 Kaggle에서 받음), ClickHouse 연결, 제어기 밀림 지표 문제(ADR-0007 남은 문제), 11월 EC2·Terraform 준비 (ADR-0006)
+- 다음: REES46 실제 데이터 준비·실측(사용자가 Kaggle에서 받음) 후 실제 데이터로 재검증 3회, 11월 EC2·Terraform 준비 (ADR-0006)
 - 검문소: 12/6 E1 기준선 → 1/31 H1·H2 검증 → 2/28 기능 동결 → 3/28 완성
 
 ## 작업 규칙
