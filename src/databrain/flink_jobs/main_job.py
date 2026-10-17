@@ -1,35 +1,33 @@
 """
 Flink 메인 경로 (장바구니·조회): 읽으면서 거르기 → 1분 집계 → Kafka 출력.
 
-상태: 뼈대. API 이름은 PyFlink 2.2.1 패키지에서 확인했지만 실제 클러스터 실행은 11월에 검증한다.
+상태: 2026-10-17 가짜 데이터로 실행·정답 대조 확인 (docs/week1.md). 실제 데이터 검증은 11월.
 
-    flink run -py src/databrain/flink_jobs/main_job.py --pyFiles src
+    flink run -d -py /opt/databrain/src/databrain/flink_jobs/main_job.py   (jobmanager 컨테이너 안에서)
 
 구조 (기획서 '확정된 설계 원칙'):
-  events.cart, events.view ──┐
+  events.cart, events.view ──┐  (워터마크는 소스에서 파티션별로, ADR-0007)
                               ├─ 거르기 (머리말만 읽음, 혼합 샘플링, 이벤트에 비율 기록)
   control.rates ── 브로드캐스트┘        │
-                                       └─ 본문 파싱 → 이벤트 시간 워터마크(유휴 시간 포함)
-                                           → 2단계 집계 (카테고리+소금 → 카테고리) → agg.minute
+                                       └─ 본문 파싱 → 2단계 집계 (카테고리+소금 → 카테고리) → agg.minute
 """
 from __future__ import annotations
 
-import calendar
 import json
 import time
 
-from pyflink.common import Duration, Types, WatermarkStrategy
+from pyflink.common import Types
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.time import Time
-from pyflink.common.watermark_strategy import TimestampAssigner
 from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.datastream.connectors.kafka import (KafkaOffsetsInitializer, KafkaRecordSerializationSchema,
-                                                 KafkaSink, KafkaSource)
+from pyflink.datastream.connectors.kafka import KafkaRecordSerializationSchema, KafkaSink
 from pyflink.datastream.functions import BroadcastProcessFunction
 from pyflink.datastream.state import MapStateDescriptor
 from pyflink.datastream.window import TumblingEventTimeWindows
+from pyflink.table import StreamTableEnvironment
 
 from databrain import wire
+from databrain.flink_jobs.watermarks import control_source, event_source, setup
 from databrain.sampling.hashing import keep, weight, unit_hash
 from databrain.sampling.heavy import HeavyUserTracker
 
@@ -66,15 +64,10 @@ class SheddingFilter(BroadcastProcessFunction):
             state.put("current", json.dumps(msg))
 
 
-class EventTime(TimestampAssigner):
-    def extract_timestamp(self, value, record_timestamp):
-        return value[1]
-
-
 def to_record(value):
     lane, raw, rate = value
     h, body = wire.decode(raw)
-    ts = int(calendar.timegm(time.strptime(body["event_time"][:19], "%Y-%m-%dT%H:%M:%S")) * 1000)   # REES46 시각은 UTC
+    ts = h.event_ms
     salt = int(unit_hash(f"s:{h.user_id}") * SALT_BUCKETS)
     # (키, 이벤트시각ms, 가중 개수, 가중 매출, 원본 건수, 최대 신선도 지연ms)
     key = f"{body['event_type']}|{body.get('category_code', 'etc')}|{salt}"
@@ -86,26 +79,15 @@ def merge(a, b):
     return a[0], max(a[1], b[1]), a[2] + b[2], a[3] + b[3], a[4] + b[4], max(a[5], b[5])
 
 
-def source(env, topic: str, group: str, name: str):
-    src = (KafkaSource.builder().set_bootstrap_servers(BOOTSTRAP).set_topics(topic).set_group_id(group)
-           .set_starting_offsets(KafkaOffsetsInitializer.earliest())
-           .set_value_only_deserializer(SimpleStringSchema())
-           .set_property("commit.offsets.on.checkpoint", "true").build())
-    return env.from_source(src, WatermarkStrategy.no_watermarks(), name)
-
-
 def build(env: StreamExecutionEnvironment, prefix: str = "") -> None:
     group = "flink-main" if not prefix else f"flink-{prefix.rstrip('.')}"
-    view = source(env, f"{prefix}events.view", group, "view").map(lambda v: ("view", v))
-    cart = source(env, f"{prefix}events.cart", group, "cart").map(lambda v: ("cart", v))
-    control = source(env, "control.rates", group + "-control", "control").broadcast(RATES)
+    t_env = StreamTableEnvironment.create(env)
+    setup(t_env)
+    view = event_source(t_env, BOOTSTRAP, f"{prefix}events.view", group, "src_view").map(lambda v: ("view", v))
+    cart = event_source(t_env, BOOTSTRAP, f"{prefix}events.cart", group, "src_cart").map(lambda v: ("cart", v))
+    control = control_source(env, BOOTSTRAP, group + "-control").broadcast(RATES)
 
-    kept = (view.union(cart).connect(control).process(SheddingFilter())
-            .map(to_record)
-            .assign_timestamps_and_watermarks(
-                WatermarkStrategy.for_bounded_out_of_orderness(Duration.of_seconds(5))
-                .with_idleness(Duration.of_seconds(10))                # 운영 함정 #2
-                .with_timestamp_assigner(EventTime())))
+    kept = view.union(cart).connect(control).process(SheddingFilter()).map(to_record)
 
     minute = Time.minutes(1)
     partial = kept.key_by(lambda r: r[0]).window(TumblingEventTimeWindows.of(minute)).reduce(merge)

@@ -15,5 +15,6 @@ KafkaSource에 `set_value_only_deserializer`만 있어 Python에서는 키와 �
 
 ## 결과
 - 형식: `user_id \t event_id \t ingest_ms \t {본문 JSON}` (src/databrain/wire.py)
+  → 2026-10-17 `event_ms`를 추가해 `user_id \t event_id \t event_ms \t ingest_ms \t {본문 JSON}`으로 변경 (ADR-0007)
 - 이벤트 종류는 토픽으로 구분하므로 머리말에 넣지 않음
 - E1에서 거르기 단계 비용을 측정해 기획서 가정(무거운 처리의 5%)과 비교

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from datetime import timezone
 
 from databrain import wire
 from databrain.replayer.schedule import build_wall_clock
@@ -46,7 +47,8 @@ def run(path: str, bootstrap: str, speed: float, bursts, prefix: str,
             uid = str(ev["user_id"])
             if workers > 1 and int(unit_hash(f"w:{uid}") * workers) != worker:
                 continue
-            t = ev["event_time"].timestamp()
+            # Parquet의 event_time은 시간대 없는 UTC 값. .timestamp()만 쓰면 PC 시간대(KST)로 해석된다
+            t = ev["event_time"].replace(tzinfo=timezone.utc).timestamp()
             if t0_data is None:
                 t0_data = t
             due = t0_wall + wall(t - t0_data)
@@ -55,7 +57,7 @@ def run(path: str, bootstrap: str, speed: float, bursts, prefix: str,
                 time.sleep(lag)
             payload = {k: (v.isoformat() if hasattr(v, "isoformat") else v)
                        for k, v in ev.items() if k not in ("user_id", "event_id", "lane", "day")}
-            value = wire.encode(uid, ev["event_id"], int(time.time() * 1000), payload)
+            value = wire.encode(uid, ev["event_id"], int(t * 1000), int(time.time() * 1000), payload)
             prod.produce(f"{prefix}events.{ev['lane']}", key=uid.encode(), value=value)
             sent += 1
             if sent % 10_000 == 0:

@@ -14,9 +14,9 @@ from databrain.sampling.heavy import HeavyUserTracker
 
 # ---------- 메시지 형식 (ADR-0005)
 def test_wire_roundtrip_and_peek_does_not_parse_body():
-    raw = wire.encode(42, "abc", 1700000000000, {"price": 9.9, "brand": "삼성"})
+    raw = wire.encode(42, "abc", 1569888000000, 1700000000000, {"price": 9.9, "brand": "삼성"})
     h = wire.peek(raw)
-    assert (h.user_id, h.event_id, h.ingest_ms) == ("42", "abc", 1700000000000)
+    assert (h.user_id, h.event_id, h.event_ms, h.ingest_ms) == ("42", "abc", 1569888000000, 1700000000000)
     assert h.body.startswith("{")                       # 본문은 문자열 그대로
     h2, body = wire.decode(raw)
     assert body == {"price": 9.9, "brand": "삼성"}
@@ -24,7 +24,7 @@ def test_wire_roundtrip_and_peek_does_not_parse_body():
 
 def test_wire_rejects_tab_in_ids():
     with pytest.raises(ValueError):
-        wire.encode("a\tb", 1, 0, {})
+        wire.encode("a\tb", 1, 0, 0, {})
 
 
 # ---------- 혼합 샘플링 (ADR-0003)

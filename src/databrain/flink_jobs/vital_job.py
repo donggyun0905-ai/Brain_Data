@@ -1,37 +1,31 @@
 """
 Flink 구매 전용 경로 (뇌간: 생명 유지). 거르지 않고 100% 처리해 분 단위 매출·주문 수를 낸다.
 
-상태: 뼈대. 11월에 실제 클러스터에서 검증.
+상태: 2026-10-17 가짜 데이터로 실행·정답 대조 확인 (docs/week1.md). 실제 데이터 검증은 11월.
 메인 경로와 다른 작업(Job)으로 띄워, 조회 폭증이 와도 처리 자원을 나눠 쓰지 않게 한다.
 """
 from __future__ import annotations
 
-import calendar
 import json
 import time
 
-from pyflink.common import Duration, Types, WatermarkStrategy
+from pyflink.common import Types
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.time import Time
-from pyflink.common.watermark_strategy import TimestampAssigner
 from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.datastream.connectors.kafka import (KafkaOffsetsInitializer, KafkaRecordSerializationSchema,
-                                                 KafkaSink, KafkaSource)
+from pyflink.datastream.connectors.kafka import KafkaRecordSerializationSchema, KafkaSink
 from pyflink.datastream.window import TumblingEventTimeWindows
+from pyflink.table import StreamTableEnvironment
 
 from databrain import wire
+from databrain.flink_jobs.watermarks import event_source, setup
 
 BOOTSTRAP = "kafka:9092"
 
 
-class EventTime(TimestampAssigner):
-    def extract_timestamp(self, value, record_timestamp):
-        return value[1]
-
-
 def to_record(raw: str):
     h, body = wire.decode(raw)
-    ts = int(calendar.timegm(time.strptime(body["event_time"][:19], "%Y-%m-%dT%H:%M:%S")) * 1000)   # REES46 시각은 UTC
+    ts = h.event_ms
     key = f"{body.get('brand', 'etc')}|{body.get('category_code', 'etc')}"
     return key, ts, 1, float(body.get("price") or 0.0), int(time.time() * 1000) - h.ingest_ms
 
@@ -45,14 +39,9 @@ if __name__ == "__main__":
     prefix = sys.argv[1] if len(sys.argv) > 1 else ""
     env = StreamExecutionEnvironment.get_execution_environment()
     env.enable_checkpointing(10_000)
-    src = (KafkaSource.builder().set_bootstrap_servers(BOOTSTRAP).set_topics(f"{prefix}events.purchase")
-           .set_group_id("flink-vital").set_starting_offsets(KafkaOffsetsInitializer.earliest())
-           .set_value_only_deserializer(SimpleStringSchema()).build())
-    stream = (env.from_source(src, WatermarkStrategy.no_watermarks(), "purchase")
-              .map(to_record)
-              .assign_timestamps_and_watermarks(
-                  WatermarkStrategy.for_bounded_out_of_orderness(Duration.of_seconds(5))
-                  .with_idleness(Duration.of_seconds(10)).with_timestamp_assigner(EventTime())))
+    t_env = StreamTableEnvironment.create(env)
+    setup(t_env)
+    stream = event_source(t_env, BOOTSTRAP, f"{prefix}events.purchase", "flink-vital", "src_purchase").map(to_record)
     agg = stream.key_by(lambda r: r[0]).window(TumblingEventTimeWindows.of(Time.minutes(1))).reduce(merge)
     sink = (KafkaSink.builder().set_bootstrap_servers(BOOTSTRAP)
             .set_record_serializer(KafkaRecordSerializationSchema.builder().set_topic(f"{prefix}agg.purchase")

@@ -13,13 +13,14 @@
 ## 반드시 지킬 설계 원칙 (근거: 사전 검증 시뮬레이션, sim/)
 1. 구매는 별도 토픽 + 별도 Flink 작업(`vital_job.py`). 절대 거르지 않는다
 2. 거르는 판단은 메시지 머리말만 읽는다 (`wire.peek`). 본문 JSON은 통과한 것만 파싱
+   머리말: `user_id ⇥ event_id ⇥ event_ms ⇥ ingest_ms ⇥ JSON` (ADR-0005, 0007)
 3. Kafka에 쌓인 데이터를 **읽을 때** 현재 비율로 거른다
 4. 제어기는 Kafka에서 1초마다 밀림을 직접 읽는다. Prometheus(15초 주기)를 제어에 쓰지 않는다
 5. 혼합 샘플링: 상위 사용자는 이벤트 단위, 나머지는 겹치는 사용자 해시. 남긴 이벤트에 비율을 실어 1/비율로 집계
 6. Kafka 키는 user_id. 상품·카테고리 집계는 소금(salt) 2단계 집계
 7. 걸러진 데이터도 버리지 않는다 (Kafka 7일 + Parquet/Iceberg 보관 → 밤에 재계산)
 8. 수면 재생은 Parquet 보관본을 재생기로 원래 간격대로 `replay.` 토픽에 다시 보낸다
-9. ClickHouse는 ReplacingMergeTree, 워터마크에는 유휴 시간(with_idleness)
+9. ClickHouse는 ReplacingMergeTree, 워터마크에는 유휴 시간. 워터마크는 SQL Kafka 소스에서 파티션별로 (ADR-0007)
 10. 관리형 클라우드 서비스(MSK, EMR, Managed Flink)와 NAT Gateway는 쓰지 않는다 (예산 약 20만 원)
 
 ## 코드로 확인한 사실 (2026-10-16)
@@ -34,6 +35,9 @@
 - make 없음 → PyCharm 실행 구성(.idea/runConfigurations) 사용. PC에서 Kafka 주소는 `localhost:29092`
 - 이미지 태그 전부 존재 확인. Flink 커넥터는 `5.0.0-2.2`, Flink 이미지 안 Python 3.12.3
 - 재생기 단일 프로세스 최대 약 39,000건/초 (3회 중앙값, 범위 36,000~48,000)
+- PC에서는 `docker compose -f docker-compose.yml -f docker-compose.local.yml --profile core up -d kafka kafka-init jobmanager taskmanager` (ADR-0006)
+- **PyFlink `from_source`는 Python TimestampAssigner를 오류 없이 무시한다** → 워터마크는 `flink_jobs/watermarks.py`의 SQL 소스로 (ADR-0007)
+- vital_job·main_job 가짜 데이터로 실행·정답 대조 통과 (따라잡기 포함, 조회 30% 거르기 추정 오차 -0.9%)
 
 ## 폴더
 ```
@@ -64,7 +68,7 @@ docs/explainer.html       처음 보는 사람용 설명 페이지 (움직이는
 
 ## 현재 단계와 다음 할 일
 - 단계: 1단계 (환경·재생기·데이터 준비, ~11/8)
-- 다음: `docs/week1.md` 체크리스트 진행. 특히 이미지 태그와 Flink Dockerfile 빌드 확인
+- 다음: REES46 실제 데이터 준비·실측(사용자가 Kaggle에서 받음), ClickHouse 연결, 제어기 밀림 지표 문제(ADR-0007 남은 문제), 11월 EC2·Terraform 준비 (ADR-0006)
 - 검문소: 12/6 E1 기준선 → 1/31 H1·H2 검증 → 2/28 기능 동결 → 3/28 완성
 
 ## 작업 규칙

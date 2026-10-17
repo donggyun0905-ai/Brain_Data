@@ -51,6 +51,7 @@ services:
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
+        jobmanager.memory.process.size: 1200m   # 이미지 기본값 1600m는 mem_limit 1500m를 넘음 (2026-10-17 확인)
         metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
         metrics.reporter.prom.port: 9249
     volumes: ["./src:/opt/databrain/src:ro"]

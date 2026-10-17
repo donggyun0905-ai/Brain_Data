@@ -1,0 +1,32 @@
+# 개발 PC용 가벼운 설정 (ADR-0006)
+# 개발 PC: 메모리 15.4GB, Docker(WSL2) 할당 8GB → core 전체(한도 합 약 11GB)를 못 띄운다.
+# 기본 docker-compose.yml은 실험 장비(AWS 32GB) 기준으로 두고, PC에서는 이 파일을 겹쳐서 줄인다.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml --profile core up -d kafka kafka-init jobmanager taskmanager
+#
+# 이 설정에서 잰 처리량은 기능 확인용이다. E1 기준선 같은 실험 수치는 실험 장비에서만 잰다.
+
+services:
+  kafka:
+    environment:
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    mem_limit: 900m
+
+  jobmanager:
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        jobmanager.memory.process.size: 900m
+    mem_limit: 1100m
+
+  taskmanager:
+    deploy: { replicas: 1 }
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        taskmanager.memory.process.size: 1600m
+    mem_limit: 2g
+
+  clickhouse:
+    mem_limit: 1g
