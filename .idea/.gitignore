@@ -1,0 +1,5 @@
+# 디폴트 무시된 파일
+/shelf/
+/workspace.xml
+# DB Navigator 플러그인 개인 설정 (접속 정보가 저장될 수 있음)
+/dbnavigator.xml
