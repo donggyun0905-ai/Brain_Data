@@ -15,8 +15,8 @@ up-batch:        ## + MinIO, Spark, Airflow
 down:
 	docker compose --profile core --profile batch --profile view --profile tools down
 
-prepare:         ## REES46 CSV → 시간순 Parquet (예: make prepare SRC=data/raw/2019-Oct.csv OUT=data/parquet/2019-10)
+prepare:         ## REES46 CSV → 시간순 Parquet (예: make prepare SRC=data/raw/2019-Nov.csv OUT=data/parquet/2019-11)
 	python -m databrain.replayer.prepare $(SRC) $(OUT)
 
-replay:          ## 하루치 재생 (예: make replay DAY=data/parquet/2019-10/day=2019-10-01 SPEED=100)
+replay:          ## 하루치 재생 (예: make replay DAY=data/parquet/2019-11/day=2019-11-01 SPEED=100)
 	docker compose run --rm replayer $(DAY) --speed $(SPEED)

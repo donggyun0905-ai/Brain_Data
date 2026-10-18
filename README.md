@@ -28,14 +28,14 @@ make test
 # 3. 사전 검증 시뮬레이션 재현
 make sim
 
-# 4. 데이터 준비: Kaggle에서 2019-Oct.csv를 data/raw/에 받은 뒤
-make prepare SRC=data/raw/2019-Oct.csv OUT=data/parquet/2019-10
+# 4. 데이터 준비: Kaggle에서 2019-Nov.csv를 data/raw/에 받은 뒤 (10월 대신 11월 사용, 2026-10-18)
+make prepare SRC=data/raw/2019-Nov.csv OUT=data/parquet/2019-11
 
 # 5. 기본 구성 실행 (메모리 약 9GB)
 make up-core
 
 # 6. 하루치 재생 (100배속)
-make replay DAY=data/parquet/2019-10/day=2019-10-01 SPEED=100
+make replay DAY=data/parquet/2019-11/day=2019-11-01 SPEED=100
 ```
 
 ## 현재 상태 (2026-10-17)
