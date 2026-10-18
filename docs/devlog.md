@@ -67,6 +67,13 @@
 
 ## 3. 다른 PC에서 시작하기
 
+> **먼저 꼭 알아 둘 것 3가지**
+> - **데이터는 Git에 올라가지 않는다.** 새 PC에서 Kaggle의 `2019-Nov.csv`(9GB)를 다시 받아 `prepare`를 돌려야 한다 (약 10분)
+> - **설치 명령이 하나 더 있다.** `pip install -r requirements.txt` 다음에 `pip install -e .`도 실행한다.
+>   이게 없으면 `python -m databrain...`과 `tools/`의 도구들이 실행되지 않는다
+> - **처음 받으면 브랜치를 바꿔야 한다.** clone 직후에는 `main`이 열린다. 지금 작업은 모두 `chore/dev-setup`에 있으므로
+>   `git checkout chore/dev-setup`을 실행한다 (main에 합친 뒤에는 필요 없음)
+
 ```bash
 git clone https://github.com/donggyun0905-ai/Brain_Data.git data-brain
 cd data-brain
