@@ -41,7 +41,7 @@ class SheddingFilter(BroadcastProcessFunction):
     """입력: (lane, raw_value). 출력: (lane, raw_value, rate) — 통과한 것만."""
 
     def open(self, runtime_context):
-        self.heavy = HeavyUserTracker()          # 사용자별 30분 감쇠 건수 20 이상 → 이벤트 단위 (ADR-0010)
+        self.heavy = HeavyUserTracker()          # 사용자별 30분 감쇠 건수 50 이상 → 이벤트 단위 (ADR-0010, 0011)
 
     def process_element(self, value, ctx):
         lane, raw = value

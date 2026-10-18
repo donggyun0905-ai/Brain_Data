@@ -73,6 +73,16 @@ def test_heavy_tracker_finds_whale_and_decays():
     assert not t.is_heavy("whale")
 
 
+def test_heavy_tracker_default_catches_bot_not_busy_human():
+    t = HeavyUserTracker()                   # 기본값: 30분, 50건 (ADR-0011)
+    for i in range(60):                      # 1분마다 1건씩 1시간 (실측 상위 1%보다 많이 봄)
+        t.add("human", i * 60_000)
+    assert not t.is_heavy("human")
+    for i in range(70):                      # 6초마다 1건 (분당 10건) → 7분 안에 잡힌다
+        t.add("bot", i * 6_000)
+    assert t.is_heavy("bot")
+
+
 def test_heavy_tracker_same_result_regardless_of_count_and_late_events():
     t = HeavyUserTracker(tau_ms=60_000)
     t.add("u", 120_000)

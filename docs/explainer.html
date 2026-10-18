@@ -309,7 +309,7 @@ footer { padding-block: 32px 48px; border-top: 1px solid var(--line); font-size:
     <div class="meter"><span class="k">장바구니까지 간 사용자 비율</span><span class="v" id="r-funnel">-</span><span class="s" id="r-funnel-s">-</span></div>
     <div class="meter"><span class="k">이 방식의 약점</span><span class="v" style="font-size:1rem;font-family:var(--font-body);font-weight:500" id="r-why">-</span></div>
   </div>
-  <p class="note prose">비율을 올려 보면 이미 남아 있던 사용자는 계속 남고 새 사용자만 추가됩니다. 해시 값이 비율보다 작으면 남기는 방식이라 5%에 뽑힌 사람은 10%에도 항상 들어 있습니다. 덕분에 비율이 바뀌어도 보고 있던 사람의 흐름이 중간에 끊기지 않습니다. 이 모형처럼 "많이 보는 소수"가 뚜렷하면 혼합 방식의 이득이 큽니다. 실제 11월 데이터로 재 보니 한 사람이 1분에 보는 조회는 많아야 13건이라 그 이득은 작았고, 대신 이벤트 단위로 거를수록 세션 안의 경로(A를 보고 B를 봄)가 끊겼습니다. 그래서 "많이 보는 사람"의 기준은 숫자 정확도와 세션 경로를 맞바꾸는 손잡이로 보고 정했습니다. 어떻게 쟀는지는 <a href="https://claude.ai/artifact/NyZpqvgoGM1rBPfNsxXX93">샘플링 관제실</a>에서 움직이는 화면으로 볼 수 있습니다. 출처: <code>tools/compare_heavy.py</code></p>
+  <p class="note prose">비율을 올려 보면 이미 남아 있던 사용자는 계속 남고 새 사용자만 추가됩니다. 해시 값이 비율보다 작으면 남기는 방식이라 5%에 뽑힌 사람은 10%에도 항상 들어 있습니다. 덕분에 비율이 바뀌어도 보고 있던 사람의 흐름이 중간에 끊기지 않습니다. 이 모형처럼 "많이 보는 소수"가 뚜렷하면 혼합 방식의 이득이 큽니다. 실제 11월 데이터로 재 보니 한 사람이 1분에 보는 조회는 많아야 13건이라 그 이득은 작았고, 대신 이벤트 단위로 거를수록 세션 안의 경로(A를 보고 B를 봄)가 끊겼습니다. 기준을 바꿔 가며 재 보니, 시간당 약 100건 넘게 보는 사람만 따로 다룰 때 숫자 정확도는 그대로이면서 경로가 92% 남았습니다. 그래서 이 기준은 봇처럼 극단적인 사용자만 잡는 안전장치로 높게 두었습니다. 어떻게 쟀는지는 <a href="https://claude.ai/artifact/NyZpqvgoGM1rBPfNsxXX93">샘플링 관제실</a>에서 움직이는 화면으로 볼 수 있습니다. 출처: <code>tools/compare_heavy.py</code></p>
 </section>
 
 <section class="night" id="sleep" aria-labelledby="sleep-title">
