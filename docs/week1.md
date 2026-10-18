@@ -6,7 +6,7 @@
 - [x] Python 3.12 가상환경 만들고 `pip install -r requirements.txt` (3.12.7, PyCharm 인터프리터 연결)
 - [x] `make test` 통과 확인 (17개). Windows에는 make가 없어 PyCharm 실행 구성 "테스트 (pytest)" 사용
 - [x] Docker Desktop 메모리 할당 확인 → 부족. PC용 가벼운 설정으로 해결 (ADR-0006)
-- [ ] GitHub에 이 저장소 올리기 (data/ 폴더는 .gitignore에 있음)
+- [x] GitHub에 이 저장소 올리기 (data/ 폴더는 .gitignore에 있음, 2026-10-18 `chore/dev-setup` 브랜치)
 
 ## 이미지·빌드 확인
 - [x] 이미지 태그 존재 확인 (2026-10-17, `docker manifest inspect`): 아래 모두 있음

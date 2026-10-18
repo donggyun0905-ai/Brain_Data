@@ -1,6 +1,7 @@
 # Data Brain — Claude 작업 안내
 
-새 세션을 시작하면 이 파일을 먼저 읽는다. 결정의 근거는 `docs/adr/`, 전체 계획은 최종 기획서에 있다.
+새 세션을 시작하면 이 파일을 먼저 읽고, 이어서 `docs/devlog.md`(현재 상황·다음 할 일·다른 PC 시작 방법)를 읽는다.
+결정의 근거는 `docs/adr/`, 전체 계획은 최종 기획서에 있다.
 
 - 최종 기획서: https://claude.ai/code/artifact/e8034996-53e3-4d2d-ba6e-f7d6e84507d6
 - 목표: 대기업 데이터 엔지니어 취업용 포트폴리오. 2026-10-19 ~ 2027-03-28, 1인 진행
@@ -77,6 +78,7 @@ sim/                      사전 검증 시뮬레이션 (제어기 신호 비교
 tools/                    실제 스택 측정 도구 (밀림 신호 실측, 제어기 비교, 상위 사용자 기준 비교)
 infra/                    Docker, Kafka 토픽, ClickHouse, Prometheus
 docs/adr/                 기술 결정 기록
+docs/devlog.md            개발 일지: 현재 상황, 다음 할 일, 다른 PC에서 시작하기
 docs/week1.md             첫 주 체크리스트
 docs/explainer.html       처음 보는 사람용 설명 페이지 (움직이는 모형 포함, https://claude.ai/artifact/ACFZMmuQmAq37w99JFPhWG)
 docs/sampling-cctv.html   상위 사용자 기준 비교 관제실 페이지 (https://claude.ai/artifact/NyZpqvgoGM1rBPfNsxXX93)
@@ -89,7 +91,7 @@ docs/sampling-cctv.html   상위 사용자 기준 비교 관제실 페이지 (ht
 
 ## 현재 단계와 다음 할 일
 - 단계: 1단계 (환경·재생기·데이터 준비, ~11/8)
-- 다음: ClickHouse까지 실제 데이터 흐름, 11월 EC2·Terraform 준비 (ADR-0006)
+- 다음: ClickHouse까지 실제 데이터 흐름 → 1단계 마무리 → 11월 EC2·Terraform 준비 (자세히: docs/devlog.md 2장)
 - 검문소: 12/6 E1 기준선 → 1/31 H1·H2 검증 → 2/28 기능 동결 → 3/28 완성
 
 ## 작업 규칙
