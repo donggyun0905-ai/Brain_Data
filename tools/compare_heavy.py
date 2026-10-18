@@ -1,6 +1,11 @@
 """혼합 샘플링 상위 사용자 기준 비교 (ADR-0010). 실제 데이터 1시간을 여러 기준으로 거른 뒤 정답과 비교한다.
 
     python tools/compare_heavy.py data/parquet/2019-11/day=2019-11-17 14     # 11/17 14시 (폭증)
+    python tools/compare_heavy.py data/parquet/2019-11/day=2019-11-17 14 5 10   # 가짜 봇 5개, 각 분당 10건 추가
+
+- 가짜 봇: 실제 데이터에는 봇처럼 몰아 보는 사용자가 없어서 안전장치를 시험하려고 넣는다 (ADR-0011).
+  봇마다 조회 많은 범주 하나를 골라(조회 수 비례) 1시간 내내 일정 간격으로 그 범주 상품을 본다. 세션은 봇당 하나
+- 봇 범주·분 p95 : 봇이 본 (범주, 1분) 칸만 따로 본 오차 (봇을 넣었을 때만)
 
 - 조회만 거르고 장바구니는 모두 남긴다고 본다. 시드 10개씩 3묶음 → 중앙값(범위)
 - 분 총량 p95     : 1분 조회 수 추정 오차의 95번째 백분위
@@ -34,6 +39,26 @@ def load(day: str, hour: int):
     return df
 
 
+def add_bots(df, n_bots: int, per_min: float, seed: int = 0):
+    """가짜 봇 조회를 넣는다. 반환: (새 df, 봇 행 표시)."""
+    import pandas as pd
+    g = np.random.default_rng(seed)
+    v = df[df.lane == "view"]
+    cats = v.category_code.value_counts()
+    t0, t1 = int(df.ms.min()), int(df.ms.max())
+    rows = []
+    for i in range(n_bots):
+        cat = g.choice(cats.index.values, p=(cats / cats.sum()).values)
+        prods = v.product_id[v.category_code == cat].unique()
+        step = 60_000 / per_min
+        ts = np.arange(t0 + g.random() * step, t1, step).astype(np.int64)
+        rows.append(pd.DataFrame({"user_id": df.user_id.dtype.type(10**12 + i), "user_session": f"bot-session-{i}", "ms": ts, "lane": "view",
+                                  "category_code": cat, "product_id": g.choice(prods, len(ts))}))
+    out = pd.concat([df.assign(bot=False)] + [r.assign(bot=True) for r in rows], ignore_index=True)
+    out = out.sort_values("ms", kind="stable", ignore_index=True)
+    return out.drop(columns="bot"), out.bot.values
+
+
 def criteria(df):
     N = len(df)
     uid, u = np.unique(df.user_id.values, return_inverse=True)
@@ -64,12 +89,13 @@ def criteria(df):
     return u, mi, view, c
 
 
-def evaluate(df, u, mi, view, heavy, seeds):
+def evaluate(df, u, mi, view, heavy, seeds, bot=None):
     s = np.unique(df.user_session.astype(str).values, return_inverse=True)[1]
     cat = np.unique(df.category_code.values, return_inverse=True)[1]
     NM, NS, NU = mi.max() + 1, s.max() + 1, u.max() + 1
     vi = np.flatnonzero(view); h = heavy[vi]
     cell = (cat * NM + mi)[vi]; tc = np.bincount(cell); big = np.flatnonzero(tc >= 100)
+    bcell = np.unique(cell[bot[vi]]) if bot is not None else None
     tm = np.bincount(mi[vi], minlength=NM)
     sv = np.bincount(s[vi], minlength=NS); s_cart = np.bincount(s[~view], minlength=NS) > 0
     true_f = s_cart[sv > 0].mean()
@@ -92,12 +118,15 @@ def evaluate(df, u, mi, view, heavy, seeds):
     out = {}
     for r in RATES:
         pi = 1 - (1 - r) ** nh * (1 - r * (nl > 0))          # 세션이 하나라도 남을 확률
-        em, ec, ef, part, whole, path, dwell, prior = [], [], [], [], [], [], [], []
+        em, ec, ef, part, whole, path, dwell, prior, eb = [], [], [], [], [], [], [], [], []
         for sd in seeds:
             g = np.random.default_rng(sd)
             k = np.where(h, g.random(len(vi)) < r, g.random(NU)[u[vi]] < r)
             em.append(np.abs(np.bincount(mi[vi][k], minlength=NM) / r - tm) / tm)
-            ec.append((np.abs(np.bincount(cell[k], minlength=len(tc)) / r - tc) / np.maximum(tc, 1))[big])
+            ce = np.abs(np.bincount(cell[k], minlength=len(tc)) / r - tc) / np.maximum(tc, 1)
+            ec.append(ce[big])
+            if bcell is not None:
+                eb.append(ce[bcell])
             ks = np.bincount(s[vi][k], minlength=NS); seen = ks > 0; w = 1 / pi[seen]
             ef.append(abs((w * s_cart[seen]).sum() / w.sum() - true_f))
             part.append(((ks > 0) & (ks < sv))[sv > 0].mean())
@@ -112,27 +141,33 @@ def evaluate(df, u, mi, view, heavy, seeds):
             prior.append(hit[cs].mean())
         out[r] = (np.percentile(np.concatenate(em), 95) * 100, np.percentile(np.concatenate(ec), 95) * 100,
                   np.percentile(ef, 95) * 100, np.mean(part) * 100, np.mean(whole) * 100,
-                  np.mean(path) * 100, np.mean(dwell) * 100, np.mean(prior) * 100)
+                  np.mean(path) * 100, np.mean(dwell) * 100, np.mean(prior) * 100,
+                  np.percentile(np.concatenate(eb), 95) * 100 if eb else float("nan"))
     return out
 
 
-def main(day: str, hour: int) -> None:
-    df = load(day, hour)
+def main(day: str, hour: int, n_bots: int = 0, per_min: float = 0) -> None:
+    df, bot = load(day, hour), None
+    if n_bots:
+        df, bot = add_bots(df, n_bots, per_min)
     u, mi, view, cs = criteria(df)
     groups = [range(o, o + 10) for o in (0, 100, 200)]
     report = {}
     for name, heavy in cs.items():
-        runs = [evaluate(df, u, mi, view, heavy, g) for g in groups]
+        runs = [evaluate(df, u, mi, view, heavy, g, bot) for g in groups]
         report[name] = {"상위 판정 조회%": round(heavy[view].mean() * 100, 1)}
+        if bot is not None:                  # 봇 조회 중 이벤트 단위로 넘어간 비율
+            report[name]["봇 판정%"] = round(heavy[bot].mean() * 100, 1)
         for r in RATES:
             cols = zip(*(run[r] for run in runs))
             med = [sorted(x) for x in cols]
             report[name][str(r)] = {m: [round(v[1], 1), round(v[0], 1), round(v[2], 1)] for m, v in
                                     zip(("분 총량 p95%", "범주·분 p95%", "퍼널 p95%p", "쪼개진 세션%",
-                                                  "세션 통째 보존%", "경로 보존%", "체류 시간 틀림%", "담기 전 조회%"), med)}
-    print(json.dumps({"day": day, "hour": hour, "events": len(df), "views": int(view.sum()), "res": report},
-                     ensure_ascii=False))
+                                                  "세션 통째 보존%", "경로 보존%", "체류 시간 틀림%", "담기 전 조회%",
+                                                  "봇 범주·분 p95%"), med) if not np.isnan(v[1])}
+    print(json.dumps({"day": day, "hour": hour, "bots": [n_bots, per_min], "events": len(df), "views": int(view.sum()),
+                      "res": report}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], int(sys.argv[2]))
+    main(sys.argv[1], int(sys.argv[2]), *(int(sys.argv[3]), float(sys.argv[4])) if len(sys.argv) > 4 else ())
