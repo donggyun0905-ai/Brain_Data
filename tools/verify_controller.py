@@ -1,12 +1,13 @@
 """ADR-0008 실제 확인 도구. PC 가벼운 설정에서 Kafka + Flink를 띄운 상태로 실행한다.
 실제 Flink에서 제어기 신호 방식 비교: 2만 건 덩어리를 넣고 제어기 판단을 기록한다.
-python verify_controller.py <parquet 날짜 폴더> <결과.jsonl> <signal> <반복번호> <처리능력>"""
+python verify_controller.py <parquet 날짜 폴더> <결과.jsonl> <signal> <반복번호> <처리능력> [배속=2000]"""
 import json, os, subprocess, sys, threading, time, urllib.request
 from confluent_kafka import Consumer, TopicPartition
 from confluent_kafka.admin import AdminClient, OffsetSpec
 
 B = "localhost:29092"
 DAY, OUT, SIGNAL, REP, CAP = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
+SPEED = sys.argv[6] if len(sys.argv) > 6 else "2000"
 ENV = dict(os.environ, MSYS_NO_PATHCONV="1", PYTHONUTF8="1")
 TOPICS = {"events.view": (12, None), "events.cart": (6, None), "control.rates": (1, "cleanup.policy=compact"),
           "log.decisions": (3, None)}
@@ -84,7 +85,7 @@ ctl = subprocess.Popen([sys.executable, "-m", "databrain.controller.main", "--ca
 time.sleep(8)
 in0, out0 = filter_counts(jid)
 t_replay = time.time()
-r = subprocess.run([sys.executable, "-m", "databrain.replayer.main", DAY, "--speed", "2000"],
+r = subprocess.run([sys.executable, "-m", "databrain.replayer.main", DAY, "--speed", SPEED],
                    capture_output=True, text=True, env=ENV, timeout=120)
 # Flink가 다 처리할 때까지 + 30초 더 관찰
 total = None
