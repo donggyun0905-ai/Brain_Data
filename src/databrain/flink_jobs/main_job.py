@@ -41,8 +41,7 @@ class SheddingFilter(BroadcastProcessFunction):
     """입력: (lane, raw_value). 출력: (lane, raw_value, rate) — 통과한 것만."""
 
     def open(self, runtime_context):
-        self.heavy = HeavyUserTracker()
-        self.seen = 0
+        self.heavy = HeavyUserTracker()          # 사용자별 30분 감쇠 건수 20 이상 → 이벤트 단위 (ADR-0010)
 
     def process_element(self, value, ctx):
         lane, raw = value
@@ -50,10 +49,7 @@ class SheddingFilter(BroadcastProcessFunction):
         rates = json.loads(state.get("current")) if state.contains("current") else {"cart": 1.0, "view": 1.0}
         rate = float(rates[lane])
         h = wire.peek(raw)                       # 본문은 아직 파싱하지 않음
-        self.heavy.add(h.user_id)
-        self.seen += 1
-        if self.seen % 100_000 == 0:
-            self.heavy.decay()
+        self.heavy.add(h.user_id, h.event_ms)
         if keep(h.user_id, h.event_id, rate, self.heavy.is_heavy(h.user_id)):
             yield lane, raw, rate
 

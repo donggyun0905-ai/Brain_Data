@@ -1,4 +1,5 @@
 """브로커 없이 검증할 수 있는 핵심 로직 테스트. 실행: pytest -q"""
+import math
 import random
 
 import pytest
@@ -61,15 +62,29 @@ def test_horvitz_thompson_estimate_is_close():
 
 # ---------- 상위 사용자 판별
 def test_heavy_tracker_finds_whale_and_decays():
-    t = HeavyUserTracker(share=0.01)
-    for i in range(10_000):
-        t.add(f"user{i % 5000}")
-    for _ in range(2_000):
-        t.add("whale")
+    t = HeavyUserTracker(tau_ms=30 * 60_000, threshold=20)
+    for i in range(30):                      # 10초마다 1건 → 5분에 30건
+        t.add("whale", i * 10_000)
+    for i in range(5):                       # 1분마다 1건
+        t.add("user7", i * 60_000)
     assert t.is_heavy("whale")
     assert not t.is_heavy("user7")
-    before = t.estimate("whale"); t.decay(0.5)
-    assert t.estimate("whale") == pytest.approx(before / 2)
+    t.add("whale", 30 * 10_000 + 2 * 3_600_000)   # 2시간 쉬면 거의 0으로 줄어든다
+    assert not t.is_heavy("whale")
+
+
+def test_heavy_tracker_same_result_regardless_of_count_and_late_events():
+    t = HeavyUserTracker(tau_ms=60_000)
+    t.add("u", 120_000)
+    assert t.add("u", 60_000) == pytest.approx(2.0)   # 늦게 온 이벤트는 감쇠 없이 더함
+    assert t.add("u", 180_000) == pytest.approx(2.0 * math.exp(-1) + 1)
+
+
+def test_heavy_tracker_prunes_idle_users():
+    t = HeavyUserTracker(tau_ms=60_000, prune_every_ms=60_000, prune_below=0.05)
+    t.add("idle", 0)
+    t.add("busy", 10 * 60_000)               # 10분 뒤 정리 → idle은 e^-10 로 지워짐
+    assert "idle" not in t.users and "busy" in t.users
 
 
 # ---------- 예측형 제어기 (ADR-0002)

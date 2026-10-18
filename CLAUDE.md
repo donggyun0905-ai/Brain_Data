@@ -17,7 +17,8 @@
 3. Kafka에 쌓인 데이터를 **읽을 때** 현재 비율로 거른다
 4. 제어기는 1초마다 밀림을 직접 읽는다: 끝 위치는 Kafka, 처리 위치는 Flink REST + 추측 항법, 커밋 위치는 대비책 (ADR-0008).
    Prometheus(15초 주기)를 제어에 쓰지 않는다
-5. 혼합 샘플링: 상위 사용자는 이벤트 단위, 나머지는 겹치는 사용자 해시. 남긴 이벤트에 비율을 실어 1/비율로 집계
+5. 혼합 샘플링: 상위 사용자는 이벤트 단위, 나머지는 겹치는 사용자 해시. 남긴 이벤트에 비율을 실어 1/비율로 집계.
+   상위 = 사용자별 30분 감쇠 건수 20 이상, 이벤트 시각 기준 정확 집계 (ADR-0010)
 6. Kafka 키는 user_id. 상품·카테고리 집계는 소금(salt) 2단계 집계
 7. 걸러진 데이터도 버리지 않는다 (Kafka 7일 + Parquet/Iceberg 보관 → 밤에 재계산)
 8. 수면 재생은 Parquet 보관본을 재생기로 원래 간격대로 `replay.` 토픽에 다시 보낸다
@@ -46,6 +47,7 @@
 - 실제 시간 평균 26건/초 → 100배속 약 2,600건/초. PC에서는 10~30배속으로 재생
 - `prepare`는 2단계(split → sort). 한 번에 정렬하면 PC 메모리 부족
 - 실제 데이터로 Flink 정답 대조 6회(실시간 3, 따라잡기 3) 모두 일치, 제어기 비교 3회씩 (ADR-0007, 0008)
+- 1분 안에 몰아 보는 사용자는 거의 없다 (사용자·분당 조회 최대 13). 상위 사용자 처리 이득은 작다 (ADR-0010)
 - Flink 출력은 Kafka 기록 시각이 이벤트 시각(2019년) → 집계 토픽은 `message.timestamp.type=LogAppendTime`
 
 ## 제어기 밀림 신호 (2026-10-18, ADR-0008)
@@ -60,7 +62,7 @@
 src/databrain/
   wire.py                 메시지 머리말 형식
   sampling/hashing.py     혼합 샘플링 판단, 가중치
-  sampling/heavy.py       상위 사용자 판별 (Count-Min Sketch)
+  sampling/heavy.py       상위 사용자 판별 (사용자별 시간 감쇠 건수)
   controller/rate_model.py 예측형 비율 계산 (순수 함수, 테스트 있음)
   controller/lag.py       밀림·유입 속도 계산, Flink REST 처리 위치, 추측 항법
   controller/main.py      1초 제어 루프
@@ -71,7 +73,7 @@ src/databrain/
   flink_jobs/main_job.py  장바구니·조회 경로 (뼈대, 11월 실행 검증)
   flink_jobs/vital_job.py 구매 경로 (뼈대)
 sim/                      사전 검증 시뮬레이션 (제어기 신호 비교 compare_lag_signals.py 포함)
-tools/                    실제 스택 측정 도구 (밀림 신호 실측, 제어기 비교)
+tools/                    실제 스택 측정 도구 (밀림 신호 실측, 제어기 비교, 상위 사용자 기준 비교)
 infra/                    Docker, Kafka 토픽, ClickHouse, Prometheus
 docs/adr/                 기술 결정 기록
 docs/week1.md             첫 주 체크리스트
@@ -85,7 +87,7 @@ docs/explainer.html       처음 보는 사람용 설명 페이지 (움직이는
 
 ## 현재 단계와 다음 할 일
 - 단계: 1단계 (환경·재생기·데이터 준비, ~11/8)
-- 다음: 혼합 샘플링 상위 사용자 기준 정하기(실측 분포로), ClickHouse까지 실제 데이터 흐름, 11월 EC2·Terraform 준비 (ADR-0006)
+- 다음: ClickHouse까지 실제 데이터 흐름, 11월 EC2·Terraform 준비 (ADR-0006)
 - 검문소: 12/6 E1 기준선 → 1/31 H1·H2 검증 → 2/28 기능 동결 → 3/28 완성
 
 ## 작업 규칙
