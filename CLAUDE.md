@@ -77,7 +77,8 @@ tools/                    실제 스택 측정 도구 (밀림 신호 실측, 제
 infra/                    Docker, Kafka 토픽, ClickHouse, Prometheus
 docs/adr/                 기술 결정 기록
 docs/week1.md             첫 주 체크리스트
-docs/explainer.html       처음 보는 사람용 설명 페이지 (움직이는 모형 포함)
+docs/explainer.html       처음 보는 사람용 설명 페이지 (움직이는 모형 포함, https://claude.ai/artifact/ACFZMmuQmAq37w99JFPhWG)
+docs/sampling-cctv.html   상위 사용자 기준 비교 관제실 페이지 (https://claude.ai/artifact/NyZpqvgoGM1rBPfNsxXX93)
 ```
 
 ## 명령

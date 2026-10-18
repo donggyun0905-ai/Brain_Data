@@ -7,6 +7,11 @@
 - 범주·분 p95     : (범주, 1분) 칸 중 실제 100건 이상인 칸의 오차 95번째 백분위 (대시보드 단위)
 - 퍼널 p95        : 세션 전환율(조회 세션 중 장바구니 세션) 추정 오차. 세션이 남을 확률의 역수로 가중
 - 쪼개진 세션     : 조회 일부만 남은 세션 비율 (경로·체류 같은 세션 분석이 깨지는 양)
+세션 지표 (조회가 하나라도 남은 세션만 본다. 분석가가 실제로 보게 되는 세션)
+- 세션 통째 보존  : 조회가 전부 남은 세션 비율
+- 경로 보존       : 실제로 연달아 본 조회 두 개(A→B)가 둘 다 남아 그대로 보이는 비율
+- 체류 시간 틀림  : (남은 마지막 조회 - 남은 첫 조회)가 실제 체류 시간과 10% 넘게 다른 세션 비율 (조회 2개 이상 세션)
+- 담기 전 조회    : 장바구니에 담은 상품을 담기 전에 본 기록이 실제로 있을 때, 그 조회가 남아 보이는 비율
 """
 from __future__ import annotations
 
@@ -23,7 +28,7 @@ RATES = (0.5, 0.2, 0.1, 0.05)
 
 def load(day: str, hour: int):
     import duckdb
-    df = duckdb.sql(f"""SELECT user_id, user_session, epoch_ms(event_time) ms, lane, category_code
+    df = duckdb.sql(f"""SELECT user_id, user_session, epoch_ms(event_time) ms, lane, category_code, product_id
         FROM read_parquet('{day}/*.parquet') WHERE hour(event_time) = {hour} AND lane <> 'purchase'
         ORDER BY event_time""").df()
     return df
@@ -69,10 +74,25 @@ def evaluate(df, u, mi, view, heavy, seeds):
     sv = np.bincount(s[vi], minlength=NS); s_cart = np.bincount(s[~view], minlength=NS) > 0
     true_f = s_cart[sv > 0].mean()
     nh = np.bincount(s[vi], weights=h, minlength=NS); nl = sv - nh
+    # 세션 지표 준비: 세션·시각 순으로 줄 세운 조회
+    so = vi[np.lexsort((df.ms.values[vi], s[vi]))]
+    pos_in_vi = np.empty(len(df), np.int64); pos_in_vi[vi] = np.arange(len(vi))
+    pair = s[so][1:] == s[so][:-1]                       # 같은 세션 안에서 연달아 본 두 조회
+    a, b = pos_in_vi[so][:-1][pair], pos_in_vi[so][1:][pair]
+    pair_s = s[so][1:][pair]
+    msv = df.ms.values[vi].astype(np.int64)
+    t_first = np.full(NS, np.iinfo(np.int64).max); np.minimum.at(t_first, s[vi], msv)
+    t_last = np.full(NS, -1); np.maximum.at(t_last, s[vi], msv)
+    import pandas as pd
+    ev = pd.DataFrame({"s": s, "p": df.product_id.values, "ms": df.ms.values, "i": np.arange(len(df))})
+    cj = ev[~view].merge(ev.iloc[vi], on=["s", "p"], suffixes=("_c", "_v"))
+    cj = cj[cj.ms_v <= cj.ms_c]
+    cart_id = np.unique(cj.i_c.values, return_inverse=True)[1]; cj_v = pos_in_vi[cj.i_v.values]
+    cj_s = s[cj.i_c.values]
     out = {}
     for r in RATES:
         pi = 1 - (1 - r) ** nh * (1 - r * (nl > 0))          # 세션이 하나라도 남을 확률
-        em, ec, ef, part = [], [], [], []
+        em, ec, ef, part, whole, path, dwell, prior = [], [], [], [], [], [], [], []
         for sd in seeds:
             g = np.random.default_rng(sd)
             k = np.where(h, g.random(len(vi)) < r, g.random(NU)[u[vi]] < r)
@@ -81,8 +101,18 @@ def evaluate(df, u, mi, view, heavy, seeds):
             ks = np.bincount(s[vi][k], minlength=NS); seen = ks > 0; w = 1 / pi[seen]
             ef.append(abs((w * s_cart[seen]).sum() / w.sum() - true_f))
             part.append(((ks > 0) & (ks < sv))[sv > 0].mean())
+            whole.append((ks == sv)[seen].mean())
+            ps = seen[pair_s]; path.append((k[a] & k[b])[ps].mean())
+            kf = np.full(NS, np.iinfo(np.int64).max); np.minimum.at(kf, s[vi][k], msv[k])
+            kl = np.full(NS, -1); np.maximum.at(kl, s[vi][k], msv[k])
+            td = (t_last - t_first).astype(float); m = seen & (sv >= 2) & (td > 0)
+            dwell.append((np.abs((kl - kf)[m] - td[m]) / td[m] > 0.1).mean())
+            hit = np.zeros(cart_id.max() + 1, bool); np.logical_or.at(hit, cart_id, k[cj_v])
+            cs = np.zeros(cart_id.max() + 1, bool); cs[cart_id] = seen[cj_s]
+            prior.append(hit[cs].mean())
         out[r] = (np.percentile(np.concatenate(em), 95) * 100, np.percentile(np.concatenate(ec), 95) * 100,
-                  np.percentile(ef, 95) * 100, np.mean(part) * 100)
+                  np.percentile(ef, 95) * 100, np.mean(part) * 100, np.mean(whole) * 100,
+                  np.mean(path) * 100, np.mean(dwell) * 100, np.mean(prior) * 100)
     return out
 
 
@@ -97,10 +127,11 @@ def main(day: str, hour: int) -> None:
         for r in RATES:
             cols = zip(*(run[r] for run in runs))
             med = [sorted(x) for x in cols]
-            report[name][str(r)] = {m: f"{v[1]:.1f} ({v[0]:.1f}~{v[2]:.1f})" for m, v in
-                                    zip(("분 총량 p95%", "범주·분 p95%", "퍼널 p95%p", "쪼개진 세션%"), med)}
+            report[name][str(r)] = {m: [round(v[1], 1), round(v[0], 1), round(v[2], 1)] for m, v in
+                                    zip(("분 총량 p95%", "범주·분 p95%", "퍼널 p95%p", "쪼개진 세션%",
+                                                  "세션 통째 보존%", "경로 보존%", "체류 시간 틀림%", "담기 전 조회%"), med)}
     print(json.dumps({"day": day, "hour": hour, "events": len(df), "views": int(view.sum()), "res": report},
-                     ensure_ascii=False, indent=1))
+                     ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -271,7 +271,7 @@ footer { padding-block: 32px 48px; border-top: 1px solid var(--line); font-size:
     <article class="idea">
       <span class="tag">설계 원칙 3·4 · controller/rate_model.py</span>
       <h3>밀리기 전에 미리 줄인다</h3>
-      <p>제어기는 1초마다 Kafka에서 들어오는 속도와 밀린 양을 직접 읽고, 처리 능력에 맞는 통과 비율을 계산합니다. 줄을 본 뒤에 반응하지 않고, 줄이 생길 것을 계산해서 먼저 줄입니다. 내릴 때는 즉시, 올릴 때는 1초에 10%p씩 천천히 올립니다.</p>
+      <p>제어기는 1초마다 들어오는 속도와 밀린 양을 직접 읽고, 처리 능력에 맞는 통과 비율을 계산합니다. 밀린 양은 "Kafka에 마지막으로 들어온 위치"에서 "Flink가 지금 읽고 있는 위치"를 뺀 값입니다. Flink가 Kafka에 남기는 읽은 위치는 7~9초 늦기 때문에, Flink에게 직접 물어본 위치를 쓰고 그 뒤에 처리했을 양을 계산해 더 뺍니다. 실제 데이터로 시험해 보니 이렇게 바꾼 뒤 남긴 데이터가 12%에서 26%로 두 배 넘게 늘었습니다. 줄을 본 뒤에 반응하지 않고, 줄이 생길 것을 계산해서 먼저 줄입니다. 내릴 때는 즉시, 올릴 때는 1초에 10%p씩 천천히 올립니다.</p>
       <div class="formula">필요한 읽기 속도 = 유입 + 밀린 양 ÷ 2초
 읽은 이벤트당 여유 = 0.9 × 처리 능력 ÷ 필요 속도
                    − 거르기 비용
@@ -280,7 +280,7 @@ footer { padding-block: 32px 48px; border-top: 1px solid var(--line); font-size:
     <article class="idea">
       <span class="tag">설계 원칙 5 · sampling/hashing.py</span>
       <h3>통계가 틀어지지 않게 거른다</h3>
-      <p>아무렇게나 버리면 숫자가 왜곡됩니다. 일반 사용자는 사람 단위로 통째로 남기거나 빼서 "조회 → 장바구니" 흐름을 지키고, 활동량이 아주 많은 소수는 이벤트 단위로 거릅니다. 남긴 이벤트에는 그때의 비율을 실어 보내 1/비율로 원래 양을 추정합니다.</p>
+      <p>아무렇게나 버리면 숫자가 왜곡됩니다. 일반 사용자는 사람 단위로 통째로 남기거나 빼서 "조회 → 장바구니" 흐름을 지키고, 최근 30분 동안 아주 많이 본 사람(봇처럼 몰아 보는 사용자)만 이벤트 단위로 거릅니다. 남긴 이벤트에는 그때의 비율을 실어 보내 1/비율로 원래 양을 추정합니다.</p>
     </article>
   </div>
 </section>
@@ -309,7 +309,7 @@ footer { padding-block: 32px 48px; border-top: 1px solid var(--line); font-size:
     <div class="meter"><span class="k">장바구니까지 간 사용자 비율</span><span class="v" id="r-funnel">-</span><span class="s" id="r-funnel-s">-</span></div>
     <div class="meter"><span class="k">이 방식의 약점</span><span class="v" style="font-size:1rem;font-family:var(--font-body);font-weight:500" id="r-why">-</span></div>
   </div>
-  <p class="note prose">비율을 올려 보면 이미 남아 있던 사용자는 계속 남고 새 사용자만 추가됩니다. 해시 값이 비율보다 작으면 남기는 방식이라 5%에 뽑힌 사람은 10%에도 항상 들어 있습니다. 덕분에 비율이 바뀌어도 보고 있던 사람의 흐름이 중간에 끊기지 않습니다. 실제 시뮬레이션 기준으로 이벤트 무작위는 퍼널을 최대 +16%p 왜곡했고, 사용자 해시는 총량 오차가 최대 18%였습니다. 혼합 방식은 퍼널 오차 3.3%p, 총량 오차 5.5%(각각 95번째 백분위)였습니다. 출처: <code>sim/compare_sampling.py</code></p>
+  <p class="note prose">비율을 올려 보면 이미 남아 있던 사용자는 계속 남고 새 사용자만 추가됩니다. 해시 값이 비율보다 작으면 남기는 방식이라 5%에 뽑힌 사람은 10%에도 항상 들어 있습니다. 덕분에 비율이 바뀌어도 보고 있던 사람의 흐름이 중간에 끊기지 않습니다. 이 모형처럼 "많이 보는 소수"가 뚜렷하면 혼합 방식의 이득이 큽니다. 실제 11월 데이터로 재 보니 한 사람이 1분에 보는 조회는 많아야 13건이라 그 이득은 작았고, 대신 이벤트 단위로 거를수록 세션 안의 경로(A를 보고 B를 봄)가 끊겼습니다. 그래서 "많이 보는 사람"의 기준은 숫자 정확도와 세션 경로를 맞바꾸는 손잡이로 보고 정했습니다. 어떻게 쟀는지는 <a href="https://claude.ai/artifact/NyZpqvgoGM1rBPfNsxXX93">샘플링 관제실</a>에서 움직이는 화면으로 볼 수 있습니다. 출처: <code>tools/compare_heavy.py</code></p>
 </section>
 
 <section class="night" id="sleep" aria-labelledby="sleep-title">
@@ -358,13 +358,13 @@ footer { padding-block: 32px 48px; border-top: 1px solid var(--line); font-size:
   <div class="prose" style="display:grid;gap:8px">
     <p class="eyebrow">구성</p>
     <h2 id="stack-title">무엇으로 만드나</h2>
-    <p>관리형 클라우드 서비스 없이 Docker로 직접 띄웁니다. 전체 예산은 약 20만 원입니다. 데이터는 실제 쇼핑몰 행동 로그(REES46, 한 달에 약 4천만 건)를 재생기로 원래 시간 간격대로 흘려 보냅니다.</p>
+    <p>관리형 클라우드 서비스 없이 Docker로 직접 띄웁니다. 전체 예산은 약 20만 원입니다. 데이터는 실제 쇼핑몰 행동 로그(REES46 2019년 11월, 한 달에 약 6,750만 건)를 재생기로 원래 시간 간격대로 흘려 보냅니다. 11월 15~17일 대형 할인 때는 하루 이벤트가 평소의 약 3.7배라, 진짜 폭증을 그대로 재생할 수 있습니다.</p>
   </div>
   <div class="stack">
     <div><b>재생기</b><span>Parquet를 원래 간격·배속대로 Kafka에 전송, 폭증 구간 재현</span></div>
     <div><b>Kafka</b><span>이벤트 대기열. 키는 user_id, 7일 보관</span></div>
     <div><b>PyFlink</b><span>거르기·1분 집계 작업과 구매 전용 작업</span></div>
-    <div><b>제어기 (Python)</b><span>1초마다 밀림을 읽고 통과 비율 발행</span></div>
+    <div><b>제어기 (Python)</b><span>1초마다 Kafka와 Flink에서 밀림을 읽고 통과 비율 발행</span></div>
     <div><b>ClickHouse</b><span>집계 결과 저장, 대시보드 조회</span></div>
     <div><b>Prometheus · Grafana</b><span>상태 화면 (제어에는 쓰지 않음)</span></div>
     <div><b>DuckDB · Parquet · Iceberg</b><span>원본 정리와 걸러진 데이터 보관</span></div>
@@ -376,7 +376,7 @@ footer { padding-block: 32px 48px; border-top: 1px solid var(--line); font-size:
   <div class="prose" style="display:grid;gap:8px">
     <p class="eyebrow">일정</p>
     <h2 id="plan-title">어디까지 왔나</h2>
-    <p>메시지 형식, 혼합 샘플링, 예측형 제어 계산, 재생 시간표는 구현과 단위 테스트(17개)를 마쳤습니다. 지금은 Docker 위에서 실제 데이터를 Kafka까지 흘려보는 1단계입니다.</p>
+    <p>메시지 형식, 혼합 샘플링, 예측형 제어 계산, 재생 시간표는 구현과 단위 테스트(23개)를 마쳤습니다. 실제 11월 데이터를 Docker 위의 Kafka와 Flink로 흘려 보내 1분 집계가 정답과 맞는 것을 6번 확인했고, 새 제어기도 실제 폭증 구간에서 시험했습니다. 다음은 결과를 ClickHouse까지 잇는 일입니다.</p>
   </div>
   <div class="timeline">
     <div class="tl now"><b>10/19 – 11/8</b><span>1단계: 환경, 재생기, 데이터 준비</span></div>
@@ -399,6 +399,8 @@ footer { padding-block: 32px 48px; border-top: 1px solid var(--line); font-size:
     <div><dt>샘플링</dt><dd>전부 대신 일부만 보고 전체를 추정하는 것.</dd></div>
     <div><dt>해시</dt><dd>같은 입력에 항상 같은 값을 내는 계산. 같은 사용자는 언제나 같은 판정을 받습니다.</dd></div>
     <div><dt>퍼널</dt><dd>조회 → 장바구니 → 구매로 이어지는 단계별 비율.</dd></div>
+    <div><dt>추측 항법</dt><dd>마지막으로 확인한 위치에서, 그 뒤 흐른 시간 동안 움직였을 거리를 계산해 지금 위치를 짐작하는 방법. 배가 GPS 없이 위치를 잡던 방식입니다.</dd></div>
+    <div><dt>세션</dt><dd>한 사람이 한 번 방문해서 둘러본 묶음. 무엇을 보고 다음에 무엇을 봤는지가 담깁니다.</dd></div>
   </dl>
 </section>
 
