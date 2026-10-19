@@ -182,3 +182,120 @@ def fit_capacity(rows: list[Decision], min_backlog_s: float = 1.0, bins: int = 8
         return Fit(intercept, filter_cost, len(st), len(sat), spread, r2, False,
                    f"값이 범위를 벗어남 (filter_cost {filter_cost:.3f}, capacity {intercept:.0f})")
     return Fit(intercept, filter_cost, len(st), len(sat), spread, r2, True, "ok")
+
+
+# ---------------------------------------------------------------------------
+# 두 번째 추정기: 여러 초를 묶고, 기록에 남은 비율을 쓴다 (2026-10-19, ADR-0014 보강)
+#
+# 실제 기록에 위 방식을 돌렸더니 거부당했다. 원인은 잡음이 아니라 구조였다.
+#   - 1초 단위로 `읽은 수 = 유입 − 밀림 증가`를 계산하면 355구간 중 131구간(37%)이 음수가 된다
+#   - 꽉 찬 구간의 읽은 수 중앙값이 96/초인데 한 구간은 10,704까지 튄다
+#   - Flink REST 처리 위치가 묶음 단위로 뛰어서 밀림이 한 초에 수천씩 움직이기 때문이다
+#
+# 고치는 생각 두 가지.
+#   1) **여러 초를 묶으면 중간 요동이 상쇄된다.** 창 전체로 보면
+#      읽은 총수 = 유입 총합 − (창 끝 밀림 − 창 시작 밀림) 이고, 중간 값은 식에서 사라진다
+#      (1초마다 음수를 0으로 깎으면 이 상쇄가 깨진다. 그래서 깎기 전에 묶는다)
+#   2) **남긴 수를 쓰지 않는다.** 꽉 찬 동안에는 작업량이 처리 능력이므로
+#         읽은 수(초) = capacity / (filter_cost + 그 초의 실효 비율)
+#      실효 비율은 큐에 쌓인 경로 비중으로 가중한 값이고, 비율과 밀림이 기록에 그대로 있다.
+#      그러면 창마다
+#         읽은 총수 R = capacity × Σ 1/(filter_cost + 실효 비율)
+#      이 되어, 창이 여러 개면 capacity와 filter_cost를 최소제곱으로 맞출 수 있다.
+#      filter_cost를 격자로 훑고, 그 값마다 capacity는 닫힌 식으로 바로 나온다.
+
+
+def effective_rate(d: Decision) -> float:
+    """그 초에 '읽은 이벤트 하나당 남긴 비율'. 큐에 쌓인 경로 비중으로 가중한다.
+
+    시뮬레이터의 비용 식과 같다 (`sim/compare_controllers.py`의 `cost`):
+        비용 = filter_cost + (장바구니 밀림 × 장바구니 비율 + 조회 밀림 × 조회 비율) / 전체 밀림
+    """
+    q = max(0.0, d.backlog_cart) + max(0.0, d.backlog_view)
+    if q <= 0:
+        return (d.cart + d.view) / 2.0
+    return (max(0.0, d.backlog_cart) * d.cart + max(0.0, d.backlog_view) * d.view) / q
+
+
+@dataclass(frozen=True)
+class RateWindow:
+    start_s: float
+    secs: int                 # 묶은 초 수
+    read: float               # 그 창에서 읽은 총수 (텔레스코핑으로 구함)
+    rates: tuple[float, ...]  # 초마다의 실효 비율
+    min_leftover: float       # 창 안에서 '쌓인 채 못 읽고 남은 양'의 최솟값 (꽉 찼는지 판단용)
+
+    def s_of(self, filter_cost: float) -> float:
+        """capacity 한 단위가 이 창에서 읽어 낼 수 있는 건수. R = capacity × s_of(fc)."""
+        return sum(1.0 / (filter_cost + r) for r in self.rates)
+
+
+def rate_windows(rows: list[Decision], window_s: float = 20.0) -> list[RateWindow]:
+    """기록을 window_s초짜리 창으로 묶는다. 읽은 총수는 창 양 끝 밀림만으로 구한다."""
+    out: list[RateWindow] = []
+    i = 0
+    while i < len(rows) - 1:
+        j = i
+        while j < len(rows) - 1 and rows[j + 1].at_s - rows[i].at_s < window_s:
+            j += 1
+        if j == i:
+            break
+        a, b = rows[i], rows[j]
+        arrivals = 0.0                         # 창 동안 두 경로로 들어온 총 건수
+        for k in range(i + 1, j + 1):
+            dt = rows[k].at_s - rows[k - 1].at_s
+            arrivals += (max(rows[k].in_cart_eps, 0.0) + max(rows[k].in_view_eps, 0.0)) * dt
+        bl_a = max(0.0, a.backlog_cart) + max(0.0, a.backlog_view)
+        bl_b = max(0.0, b.backlog_cart) + max(0.0, b.backlog_view)
+        read = arrivals - (bl_b - bl_a)
+        rates = tuple(effective_rate(rows[k]) for k in range(i, j))
+        # 꽉 찼는지는 '쌓인 채 못 읽고 남은 양'으로 본다: 그 초의 밀림 - 그 초에 들어온 양.
+        # 밀림 값만 보면 안 된다. 기록된 밀림에는 그 초의 유입이 이미 들어 있어서,
+        # 매초 큐를 다 비우는 한가한 하루도 '밀림 = 유입'이 되어 꽉 찬 것처럼 보인다
+        # (2026-10-19: 한가한 가짜 하루에서 처리 능력 대신 유입 속도 505를 돌려줬다)
+        leftovers = []
+        for k in range(i, j + 1):
+            inflow = (max(rows[k].in_cart_eps, 0.0) + max(rows[k].in_view_eps, 0.0)) * (
+                rows[k].at_s - rows[k - 1].at_s if k > 0 else 1.0)
+            bl = max(0.0, rows[k].backlog_cart) + max(0.0, rows[k].backlog_view)
+            leftovers.append(bl - inflow)
+        if read > 0 and rates:
+            out.append(RateWindow(a.at_s, j - i, read, rates, min(leftovers)))
+        i = j
+    return out
+
+
+def fit_from_rates(rows: list[Decision], window_s: float = 20.0, min_windows: int = 5,
+                   min_leftover: float = 100.0,
+                   fc_grid: tuple[float, ...] = tuple(i / 1000 for i in range(5, 501, 5))) -> Fit:
+    """창마다의 (읽은 총수, 비율 목록)으로 capacity와 filter_cost를 맞춘다.
+
+    min_leftover: 창 안의 모든 초에서 '쌓인 채 못 읽고 남은 양'이 이 값 이상이어야 '꽉 찼다'고 본다.
+                  한 번이라도 큐가 비면 그 창은 처리 능력이 아니라 유입이 읽은 수를 정하므로 버린다.
+                  측정 잡음을 흡수하려고 0이 아니라 약간 큰 값을 기본으로 둔다
+    """
+    wins = [w for w in rate_windows(rows, window_s) if w.min_leftover >= min_leftover]
+    if len(wins) < min_windows:
+        return Fit(0.0, 0.0, len(rows) - 1, len(wins), 0.0, 0.0, False,
+                   f"꽉 찬 창이 {len(wins)}개뿐 (필요 {min_windows}). window_s를 줄이거나 폭증을 길게")
+    best = None
+    for fc in fc_grid:
+        sw = [w.s_of(fc) for w in wins]
+        den = sum(s * s for s in sw)
+        if den <= 0:
+            continue
+        cap = sum(w.read * s for w, s in zip(wins, sw)) / den
+        sse = sum((w.read - cap * s) ** 2 for w, s in zip(wins, sw))
+        if best is None or sse < best[0]:
+            best = (sse, cap, fc)
+    sse, cap, fc = best
+    mean_r = sum(w.read for w in wins) / len(wins)
+    sst = sum((w.read - mean_r) ** 2 for w in wins)
+    r2 = 1.0 - sse / sst if sst > 0 else 1.0
+    spread = max(w.read for w in wins) / min(w.read for w in wins)
+    if cap <= 0:
+        return Fit(cap, fc, len(rows) - 1, len(wins), spread, r2, False, f"capacity가 {cap:.0f}")
+    if fc >= fc_grid[-1] - 1e-9:
+        return Fit(cap, fc, len(rows) - 1, len(wins), spread, r2, False,
+                   f"filter_cost가 격자 끝({fc:.3f})에 붙었다 → 비용 모형과 어긋남")
+    return Fit(cap, fc, len(rows) - 1, len(wins), spread, r2, True, "ok")
