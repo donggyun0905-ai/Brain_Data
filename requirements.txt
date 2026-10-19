@@ -1,6 +1,7 @@
 # 재생기·제어기·시뮬레이터 (Python 3.12)
 confluent-kafka>=2.6
 duckdb>=1.1
+pandas>=2.2        # tools/compare_heavy.py, tools/verify_shedding.py (2026-10-19: 빠져 있어 새 PC에서 실행 실패)
 numpy>=2.0
 optuna>=4.0        # 수면 재생 후보 탐색 (2월)
 pytest>=8.0
