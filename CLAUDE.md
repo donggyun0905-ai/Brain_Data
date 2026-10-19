@@ -86,7 +86,7 @@ src/databrain/
   flink_jobs/main_job.py  장바구니·조회 경로 (뼈대, 11월 실행 검증)
   flink_jobs/vital_job.py 구매 경로 (뼈대)
 sim/                      사전 검증 시뮬레이션 (제어기 신호 비교 compare_lag_signals.py 포함)
-tools/                    실제 스택 측정 도구 (밀림 신호 실측, 제어기 비교, 상위 사용자 기준 비교)
+tools/                    실제 스택 측정 도구 (밀림 신호, 제어기 비교, 상위 사용자 기준, ClickHouse 대조, H2 실측)
 infra/                    Docker, Kafka 토픽, ClickHouse, Prometheus
 docs/adr/                 기술 결정 기록
 docs/devlog.md            개발 일지: 현재 상황, 다음 할 일, 다른 PC에서 시작하기
@@ -102,7 +102,10 @@ docs/sampling-cctv.html   상위 사용자 기준 비교 관제실 페이지 (ht
 
 ## 현재 단계와 다음 할 일
 - 단계: 1단계 (환경·재생기·데이터 준비, ~11/8)
-- 다음: ClickHouse까지 실제 데이터 흐름 → 1단계 마무리 → 11월 EC2·Terraform 준비 (자세히: docs/devlog.md 2장)
+- 다음: 1단계 마무리(Kafka 볼륨, 제어기 포함 전체 흐름) → 11월 EC2·Terraform 준비 (자세히: docs/devlog.md 2장)
+- ClickHouse 적재는 실제 데이터로 확인 완료 (2026-10-19, ADR-0016)
+- **검증 도구를 만들 때**: 실패를 삼키지 말고(종료 코드 확인), 기다림은 '출력'과 '읽은 건수'가
+  둘 다 멈춘 뒤에 끝내고, 조건이 안 되면 '판정 불가'로 쓴다 (ADR-0016). 검증 중에는 스택을 조회만 한다
 - 검문소: 12/6 E1 기준선 → 1/31 H1·H2 검증 → 2/28 기능 동결 → 3/28 완성
 
 ## 작업 규칙

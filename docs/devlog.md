@@ -19,7 +19,7 @@
 | 재생기 (`replayer/`) | 완료. 단일 프로세스 최대 약 39,000건/초 | week1.md |
 | 데이터 준비 (`replayer/prepare.py`) | 완료. REES46 2019-11, 67,501,979행 → 날짜별 Parquet | ADR-0009 |
 | Flink 메인·구매 작업 | 실제 데이터로 정답 대조 통과 (전부 통과 6회, 10% 거르기 3회) | ADR-0007, 0011 |
-| ClickHouse 적재 | 가짜 데이터로만 확인. **실제 데이터로는 아직** | week1.md |
+| ClickHouse 적재 | **실제 데이터로 확인 완료.** 정답 일치 777/777·548/548, 중복 제거도 통과 | ADR-0016 |
 | 수면 재생 | **설계 완료, 모형 교정 구현·검증 완료** (1·3단계는 12월·2월) | ADR-0014 |
 | 오차 범위 (H2 기준 ①) | **분산 식 구현·검증 완료.** 1분 창 적중률 91.9~94.7% | ADR-0015 |
 | 화면 3개, 배치(MinIO·Spark·Airflow) | 시작 전 (일정상 12월~2월) | 기획서 |
@@ -36,16 +36,17 @@
 
 ## 2. 다음에 할 일 (순서대로)
 
-### 2-1. ClickHouse까지 실제 데이터 흐름 확인 ← 바로 다음
-목표: 재생기 → Kafka → Flink → ClickHouse를 실제 11월 데이터로 돌리고, ClickHouse 결과가 DuckDB 정답과 같은지 본다.
-- [ ] PC 가벼운 설정에 ClickHouse 추가해서 실행
-  `docker compose -f docker-compose.yml -f docker-compose.local.yml --profile core up -d kafka kafka-init jobmanager taskmanager clickhouse`
-  (메모리: 이전 가짜 데이터 때 Kafka·Flink·ClickHouse·제어기 합계 약 2.5GB)
-- [ ] `infra/clickhouse/init.sql` 확인: Kafka 엔진 테이블(agg.minute, agg.purchase) → 구체화 뷰 → ReplacingMergeTree
-- [ ] 11/17 피크 5분치(`tools/verify_flink.py`에서 쓰던 크기)를 재생한 뒤 ClickHouse에서 `SELECT ... FINAL`로 (키, 분)별 값 조회
-- [ ] DuckDB 정답과 대조하는 도구 추가 (`tools/verify_flink.py`의 `check()`를 재사용하면 됨)
-- [ ] 따라잡기(먼저 쌓고 나중에 처리)에서 같은 창이 두 번 들어와도 ReplacingMergeTree로 한 번만 세어지는지 확인
-- [ ] 3회 반복, 중앙값과 범위를 week1.md·ADR에 기록
+### 2-1. ClickHouse까지 실제 데이터 흐름 확인 — **2026-10-19 완료 (ADR-0016)**
+- [x] 가벼운 설정에 ClickHouse 추가해서 실행 (학교 PC 실제 사용량 약 1.8GB)
+- [x] `infra/clickhouse/init.sql` 확인: Kafka 엔진 → 구체화 뷰 → ReplacingMergeTree
+- [x] 11/17 14:00~14:06 46,564건 재생 → `SELECT ... FINAL`로 (키, 분)별 조회
+- [x] DuckDB 정답 대조 도구 추가 (`tools/verify_clickhouse.py`, `verify_flink.check()` 재사용)
+  - 실시간 5배속: main 777/777, vital 548/548 일치, 군더더기 0
+- [x] 같은 창이 두 번 들어와도 한 번만 세는지 확인
+  - `agg_minute` 777→1,554행 / `purchase_minute` 548→1,096행인데 `FINAL`은 777·548로 정답 일치
+- [ ] 3회 반복 기록 (지금은 각 1회. 값이 '전부 일치/불일치'로 갈리는 확인이라 반복 가치는 낮음)
+- [x] 덤: 도구 이식성 수정 (`docker-compose.yml`에 `name: data-brain` 고정) + 검증 도구가
+      조용히 잘못된 결론을 내던 문제 3건 수정 (ADR-0016)
 
 ### 2-2. 1단계 마무리 (~11/8)
 - [ ] Kafka에 볼륨 추가 (지금은 `down`하면 토픽 데이터가 사라짐 → 7일 보관 원칙과 안 맞음)
@@ -134,6 +135,12 @@ git checkout chore/dev-setup
   - **기획서 H2 기준 ③은 달성 불가**: 통과 10%/5분 조회수 오차 실측 7.2% (목표 3%) → 기획서 갱신 요청
   - 적중률: 1분 91.9~94.7%, 5분 86.0~93.1%. **식은 맞고 추정이 원인** (정답 분산이면 94.3~95.5%)
   - → 화면 기본 단위는 1분. 5분 이상은 수면 재생 확정값의 Σ A²로 보정 (ADR-0014와 연결)
+- **ClickHouse 적재 확인 완료 (ADR-0016, 일지 2-1)**: `tools/verify_clickhouse.py` 추가
+  - 실제 11월 데이터로 main 777/777, vital 548/548 정답 일치. 중복이 들어와도 `FINAL`은 그대로
+  - `main_job.py`와 `init.sql`에 오차 범위 열(`var_sum`) 추가, 화면용 `agg_minute_shown` 뷰 추가
+  - 도구가 컨테이너 이름을 박아 둬서 폴더명이 다른 PC에서 전부 실패할 상태였다 → `name: data-brain` 고정
+  - **교훈**: 검증 도구가 조용히 잘못된 결론을 내는 실수를 세 번 했다 (stderr 버림, 성급한 기다림 2종).
+    '틀린 판정보다 판정 불가가 낫다'로 고쳤다. 검증 중에는 스택을 조회만 한다
 
 ### 2026-10-16 — 설계 원칙 확정과 코드로 확인
 - 사전 검증 시뮬레이션(`sim/`)으로 설계 원칙 확정: 예측형 제어기 신선도 p99 0.1초 (단계형 1.9초, 조절 없음 810초)
