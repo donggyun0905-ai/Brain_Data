@@ -92,20 +92,30 @@ class ClusterIndex:
 
     비율은 자릿수를 줄여 묶는다. 1초마다 바뀌는 값을 그대로 쓰면 묶음이 잘게 쪼개져
     분산을 작게 보기 때문이다 (쪼개질수록 '한 사람이 같이 움직인다'는 성질이 사라진다).
+
+    창(분)은 열쇠에 넣고, 오래된 분만 치운다. '분이 바뀌면 다 비우기'로 하면 안 된다.
+    조회·장바구니 토픽을 합친 흐름에서는 분이 뒤섞여 들어와 상태가 계속 날아간다
+    (2026-10-19: Flink에 넣기 전에 발견).
     """
 
-    def __init__(self, rate_digits: int = 2):
+    def __init__(self, rate_digits: int = 2, keep_windows: int = 3):
         self.rate_digits = rate_digits
+        self.keep_windows = keep_windows
         self._n: dict[tuple, int] = {}
-        self._minute: int | None = None
+        self._max_minute: int | None = None
 
     def next(self, user_id: str, cell: str, minute_ms: int, rate: float, heavy: bool) -> int:
         if heavy:
             return 1                                  # 이벤트마다 묶음이 따로
-        if minute_ms != self._minute:                 # 창이 바뀌면 지난 창 것은 버린다
-            self._n.clear()
-            self._minute = minute_ms
-        key = (user_id, cell, round(rate, self.rate_digits))
+        if self._max_minute is None or minute_ms > self._max_minute:
+            self._max_minute = minute_ms
+            self._prune()
+        key = (minute_ms, user_id, cell, round(rate, self.rate_digits))
         i = self._n.get(key, 0) + 1
         self._n[key] = i
         return i
+
+    def _prune(self) -> None:
+        cut = self._max_minute - self.keep_windows * 60_000
+        if any(k[0] < cut for k in self._n):
+            self._n = {k: v for k, v in self._n.items() if k[0] >= cut}

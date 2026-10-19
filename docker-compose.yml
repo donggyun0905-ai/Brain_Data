@@ -6,6 +6,10 @@
 # 이미지 태그는 2026-10-17에 모두 존재 확인 (docs/week1.md). MinIO만 batch 단계 전에 다시 확인.
 # 개발 PC에서는 docker-compose.local.yml을 겹쳐 쓴다 (ADR-0006).
 
+# 프로젝트 이름을 고정한다. 안 적으면 폴더 이름에서 만들어져 컨테이너 이름이 PC마다 달라지고,
+# tools/의 `docker exec data-brain-kafka-1`이 전부 실패한다 (2026-10-19: DataBrain 폴더에서 databrain-* 로 떴다)
+name: data-brain
+
 x-app: &app
   build: { context: ., dockerfile: infra/app/Dockerfile }
   environment:

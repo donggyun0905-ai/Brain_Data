@@ -58,12 +58,22 @@ def test_heavy_events_are_their_own_cluster():
     assert [ci.next("u2", CELL, 0, 0.1, heavy=False) for _ in range(5)] == [1, 2, 3, 4, 5]
 
 
-def test_cluster_index_resets_each_window_and_splits_by_rate():
+def test_cluster_index_splits_by_window_and_rate():
     ci = ClusterIndex()
     assert ci.next("u", CELL, 0, 0.10, heavy=False) == 1
     assert ci.next("u", CELL, 0, 0.10, heavy=False) == 2
-    assert ci.next("u", CELL, 0, 0.50, heavy=False) == 1      # 비율이 다르면 다른 묶음
-    assert ci.next("u", CELL, 60_000, 0.10, heavy=False) == 1  # 창이 바뀌면 처음부터
+    assert ci.next("u", CELL, 0, 0.50, heavy=False) == 1       # 비율이 다르면 다른 묶음
+    assert ci.next("u", CELL, 60_000, 0.10, heavy=False) == 1  # 창이 다르면 다른 묶음
+    assert ci.next("u", CELL, 0, 0.10, heavy=False) == 3       # 분이 뒤섞여 와도 지난 창이 이어진다
+
+
+def test_cluster_index_drops_old_windows():
+    """오래된 창만 치운다 (기억이 끝없이 늘지 않게)."""
+    ci = ClusterIndex(keep_windows=3)
+    assert ci.next("u", CELL, 0, 0.1, heavy=False) == 1
+    ci.next("u", CELL, 10 * 60_000, 0.1, heavy=False)          # 한참 뒤 창이 오면
+    assert ci.next("u", CELL, 0, 0.1, heavy=False) == 1         # 옛 창은 잊혔다
+    assert len(ci._n) == 2
 
 
 def test_interval_is_zero_width_when_nothing_is_dropped():

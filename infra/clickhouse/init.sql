@@ -6,13 +6,17 @@ CREATE DATABASE IF NOT EXISTS databrain;
 
 -- ---------- 메인 경로 집계 (장바구니·조회, 샘플링 추정치)
 CREATE TABLE IF NOT EXISTS databrain.agg_minute_q (
-    key String, minute_ms UInt64, est_count Float64, raw_count UInt64, max_fresh_ms Int64
+    key String, minute_ms UInt64, est_count Float64, var_sum Float64, raw_count UInt64, max_fresh_ms Int64
 ) ENGINE = Kafka SETTINGS kafka_broker_list = 'kafka:9092', kafka_topic_list = 'agg.minute',
   kafka_group_name = 'ch-agg-minute', kafka_format = 'JSONEachRow';
 
 CREATE TABLE IF NOT EXISTS databrain.agg_minute (
     event_type LowCardinality(String), category_code String,
-    minute DateTime, est_count Float64, raw_count UInt64, max_fresh_ms Int64,
+    minute DateTime, est_count Float64,
+    -- 오차 범위용 흔들림 합 (ADR-0015). 95% 반폭 = 1.96 * sqrt(var_sum).
+    -- 전부 통과(비율 1.0)했으면 0이고, 그때 추정치는 확정값이다
+    var_sum Float64,
+    raw_count UInt64, max_fresh_ms Int64,
     status LowCardinality(String) DEFAULT 'estimate',     -- 'estimate' → 밤 재계산 후 'confirmed'
     inserted_at DateTime DEFAULT now()
 ) ENGINE = ReplacingMergeTree(inserted_at)
@@ -20,7 +24,7 @@ ORDER BY (event_type, category_code, minute);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS databrain.agg_minute_mv TO databrain.agg_minute AS
 SELECT splitByChar('|', key)[1] AS event_type, splitByChar('|', key)[2] AS category_code,
-       toDateTime(intDiv(minute_ms, 1000)) AS minute, est_count, raw_count, max_fresh_ms
+       toDateTime(intDiv(minute_ms, 1000)) AS minute, est_count, var_sum, raw_count, max_fresh_ms
 FROM databrain.agg_minute_q;
 
 -- ---------- 구매 전용 경로 (항상 확정값)
@@ -59,3 +63,17 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS databrain.decisions_mv TO databrain.decis
 SELECT fromUnixTimestamp64Milli(toInt64(at_ms)) AS at, in_cart_eps, in_view_eps, backlog_cart, backlog_view,
        raw_backlog_cart, raw_backlog_view, signal, age_s, cart, view, version
 FROM databrain.decisions_q;
+
+-- ---------- 화면용: 추정치에 오차 범위를 붙여 보여 준다 (ADR-0015)
+-- 반폭 = 1.96 * sqrt(흔들림 합). 전부 통과한 칸은 반폭 0 → 확정값으로 읽힌다.
+-- 5분 이상으로 묶어 볼 때는 흔들림 합을 그냥 더하면 과소평가된다 (ADR-0015 '결정 3':
+-- 수면 재생 확정값의 묶음 크기 제곱합으로 보정해야 한다). 그래서 이 뷰는 1분 단위만 제공한다.
+CREATE VIEW IF NOT EXISTS databrain.agg_minute_shown AS
+SELECT event_type, category_code, minute, status,
+       est_count,
+       1.959963984540054 * sqrt(var_sum) AS half_width,
+       greatest(0, est_count - 1.959963984540054 * sqrt(var_sum)) AS lo,
+       est_count + 1.959963984540054 * sqrt(var_sum) AS hi,
+       if(est_count > 0, 1.959963984540054 * sqrt(var_sum) / est_count, 0) AS rel_half_width,
+       raw_count, max_fresh_ms
+FROM databrain.agg_minute FINAL;
