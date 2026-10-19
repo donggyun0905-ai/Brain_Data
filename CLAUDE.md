@@ -52,6 +52,15 @@
 - 가짜 봇(시간당 1,800건) 20개를 넣으면 사용자 해시만으로는 범주·분 오차 54% → 71%, 50건 기준이 53%로 되돌림. Flink 거르기도 정답과 일치 (ADR-0011, `tools/verify_shedding.py`)
 - Flink 출력은 Kafka 기록 시각이 이벤트 시각(2019년) → 집계 토픽은 `message.timestamp.type=LogAppendTime`
 
+## H2 가설과 오차 범위 (2026-10-19, ADR-0015)
+- 기획서 H2 기준: ① 95% 오차 범위가 실제값을 95% 안팎 포함 ② 퍼널 편향 1%p 이내 ③ 통과 10%에서 5분 조회수 오차 3% 이내
+- **기준 ③은 달성 불가**: 실측 7.2% (목표 3%의 2.4배). 3%는 통과 약 50%에서나 지켜짐 → 기획서 갱신 요청 중
+- 분산은 묶음 추출로 센다. 단순 이항 분산은 적중률 80% 미만 → 반드시 `sampling/interval.py`를 쓴다
+- 적중률 실측: 1분 창 91.9~94.7%, 5분 창 86.0~93.1%. **식은 맞고 남긴 표본만으로 하는 추정이 원인**
+  (정답 분산을 쓰면 어디서나 94.3~95.5%). 묶음 크기가 들쭉날쭉하면 `V^`가 작게 나온다
+- → 화면 기본 단위는 1분. 5분 이상은 수면 재생 확정값의 `Σ A²`로 보정한다 (ADR-0014 1단계와 연결)
+- 통과 10% / 1분 칸의 평균 상대 반폭은 49% (화면에 '±50%'가 달린다). 창 총량은 ±9.7%
+
 ## 제어기 밀림 신호 (2026-10-18, ADR-0008)
 - Flink 커밋 위치는 실측 7~9초 늦다. 체크포인트를 1초로 줄여도 같다 → 처리 위치는 Flink REST currentOffset(+1)
 - Flink REST 지표는 기본 10초마다 갱신 → `metrics.fetcher.update-interval: 1s`
@@ -65,6 +74,7 @@ src/databrain/
   wire.py                 메시지 머리말 형식
   sampling/hashing.py     혼합 샘플링 판단, 가중치
   sampling/heavy.py       상위 사용자 판별 (사용자별 시간 감쇠 건수)
+  sampling/interval.py    오차 범위 (묶음 추출 분산, 더해지는 형태. ADR-0015)
   controller/rate_model.py 예측형 비율 계산 (순수 함수, 테스트 있음)
   controller/lag.py       밀림·유입 속도 계산, Flink REST 처리 위치, 추측 항법
   controller/main.py      1초 제어 루프
@@ -72,6 +82,7 @@ src/databrain/
   replayer/schedule.py    배속·폭증 시간표
   replayer/faults.py      중복·지연 주입 + 정답 기록
   replayer/main.py        Kafka로 재생
+  sleep/fit.py            그날 기록에서 처리 능력·거르기 비용 되찾기 (순수 함수, 테스트 있음. ADR-0014)
   flink_jobs/main_job.py  장바구니·조회 경로 (뼈대, 11월 실행 검증)
   flink_jobs/vital_job.py 구매 경로 (뼈대)
 sim/                      사전 검증 시뮬레이션 (제어기 신호 비교 compare_lag_signals.py 포함)
