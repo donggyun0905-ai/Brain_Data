@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -27,6 +28,7 @@ import time
 
 sys.path.insert(0, "src")
 sys.path.insert(0, "tools")
+from databrain.sampling.interval import Z95  # noqa: E402
 from databrain.sleep.fit import (Decision, fit_capacity, fit_from_rates,  # noqa: E402
                                  rate_windows, steps)
 from verify_clickhouse import (ENV, agg_offsets, ch, ch_reset, produced,  # noqa: E402
@@ -149,10 +151,11 @@ def accuracy(day: str = "data/sub/ctl30") -> dict:
     want = {k: v for k, v in t_main.items() if k[1] != last and k[0].startswith("view|")}
     got = {}
     for line in ch("SELECT concat(event_type,'|',category_code), toUnixTimestamp(minute)*1000, "
-                   "est_count, raw_count FROM databrain.agg_minute FINAL WHERE event_type='view'").splitlines():
+                   "est_count, var_sum, raw_count FROM databrain.agg_minute FINAL "
+                   "WHERE event_type='view'").splitlines():
         if line:
-            k, m, e, raw = line.split("	")
-            got[(k, int(m))] = (float(e), int(raw))
+            k, m, e, v, raw = line.split("	")
+            got[(k, int(m))] = (float(e), int(raw), float(v))
     seen = [k for k in want if k in got]
     missing = [k for k in want if k not in got]
     t_seen = sum(want[k] for k in seen)
@@ -160,14 +163,38 @@ def accuracy(day: str = "data/sub/ctl30") -> dict:
     t_missing = sum(want[k] for k in missing)
     e_tot = sum(got[k][0] for k in seen)
     r_tot = sum(got[k][1] for k in seen)
-    return {"닫힌 조회 칸": len(want), "ClickHouse에 있는 칸": len(seen),
-            "사라진 칸": len(missing),
-            "사라진 칸이 쥔 조회": t_missing,
-            "사라진 칸 비중%": round(t_missing / t_all * 100, 2) if t_all else None,
-            "정답 총량(전체)": t_all, "정답 총량(있는 칸)": t_seen, "추정 총량": round(e_tot),
-            "추정 오차%(있는 칸만, 낙관적)": round((e_tot - t_seen) / t_seen * 100, 2) if t_seen else None,
-            "추정 오차%(전체 정답 기준)": round((e_tot - t_all) / t_all * 100, 2) if t_all else None,
-            "실제 통과율%": round(r_tot / t_all * 100, 2) if t_all else None}
+    v_tot = sum(got[k][2] for k in seen)
+
+    # 총량 오차 범위. 칸별 흔들림 합을 그냥 더한 값이므로 **하한**이다:
+    # keep()은 unit_hash("u:"+user_id) 하나로만 판단하므로 한 사용자의 묶음이 집계 구간
+    # 전체에 걸친다. 칸 안에서만 센 var_sum을 더하면 그 걸침을 놓친다 (ADR-0015 결정 3, ADR-0018)
+    half = Z95 * math.sqrt(v_tot) if v_tot > 0 else 0.0
+    dev = e_tot - t_all
+    out = {"닫힌 조회 칸": len(want), "ClickHouse에 있는 칸": len(seen),
+           "사라진 칸": len(missing),
+           "사라진 칸이 쥔 조회": t_missing,
+           "사라진 칸 비중%": round(t_missing / t_all * 100, 2) if t_all else None,
+           "정답 총량(전체)": t_all, "정답 총량(있는 칸)": t_seen, "추정 총량": round(e_tot),
+           "추정 오차%(있는 칸만, 낙관적)": round((e_tot - t_seen) / t_seen * 100, 2) if t_seen else None,
+           "추정 오차%(전체 정답 기준)": round((e_tot - t_all) / t_all * 100, 2) if t_all else None,
+           # 분모는 '닫힌 칸 전체'다. 2026-10-19까지는 '있는 칸'이 분모여서 더 높게 나왔다 (비교 주의)
+           "실제 통과율%(전체 정답 기준)": round(r_tot / t_all * 100, 2) if t_all else None,
+           "총량 95% 반폭(하한 추정)": round(half),
+           "총량 반폭%(하한 추정)": round(half / t_all * 100, 2) if t_all else None,
+           "벗어난 정도(하한 sd 기준 배)": round(abs(dev) / (half / Z95), 2) if half > 0 else None}
+    # 분마다 '표본에 하나도 안 걸린 범주'가 몇 개인지 (ADR-0018 결정 3)
+    per_min: dict[int, list[int]] = {}
+    for k in want:
+        a = per_min.setdefault(k[1], [0, 0])
+        a[0] += 1
+        if k not in got:
+            a[1] += 1
+    worst = sorted(per_min.items(), key=lambda kv: -kv[1][1])[:3]
+    out["표본에 안 걸린 범주 (최악 3분)"] = [
+        {"분": time.strftime("%H:%M", time.gmtime(m / 1000)) + " UTC",
+         "범주 수": a[0], "안 걸린 범주": a[1],
+         "안 걸린 비율%": round(a[1] / a[0] * 100, 1)} for m, a in worst]
+    return out
 
 
 def run(day: str, speed: str, capacity: float, burst: str | None) -> dict:
