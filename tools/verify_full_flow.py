@@ -132,25 +132,42 @@ def rate_story(rows: list[Decision]) -> dict:
             "서로 다른 비율 값 수": len({round(x, 3) for x in v})}
 
 
-def accuracy() -> dict:
-    """거른 뒤에도 추정 총량이 맞는가 (조회 전체 기준)."""
-    t_main, _ = truth("data/sub/ctl30")
+def accuracy(day: str = "data/sub/ctl30") -> dict:
+    """거른 뒤에도 추정 총량이 맞는가.
+
+    **두 가지 오차를 모두 낸다** (2026-10-20에 고침).
+    예전에는 'ClickHouse에 있는 칸'만 모아 비교해서 +0.42%로 보고했다. 그런데 통과 비율이
+    바닥일 때는 어떤 칸의 사용자가 전부 걸러져 **행이 아예 안 생긴다**. 그 칸을 빼고 세면
+    오차가 좋아 보인다. 실제로 누락 칸이 전체 조회의 4%를 쥐고 있었고,
+    전체 정답 기준 오차는 -3.58%였다 (ADR-0018).
+
+    화면 입장에서 중요한 쪽은 **전체 정답 기준**이다. 사라진 칸은 화면에 아무것도 안 뜨므로
+    범주를 더해 만든 합계가 그만큼 모자란다.
+    """
+    t_main, _ = truth(day)
     last = max(m for _, m in t_main)
     want = {k: v for k, v in t_main.items() if k[1] != last and k[0].startswith("view|")}
     got = {}
     for line in ch("SELECT concat(event_type,'|',category_code), toUnixTimestamp(minute)*1000, "
                    "est_count, raw_count FROM databrain.agg_minute FINAL WHERE event_type='view'").splitlines():
         if line:
-            k, m, e, raw = line.split("\t")
+            k, m, e, raw = line.split("	")
             got[(k, int(m))] = (float(e), int(raw))
     seen = [k for k in want if k in got]
-    t_tot = sum(want[k] for k in seen)
+    missing = [k for k in want if k not in got]
+    t_seen = sum(want[k] for k in seen)
+    t_all = sum(want.values())
+    t_missing = sum(want[k] for k in missing)
     e_tot = sum(got[k][0] for k in seen)
     r_tot = sum(got[k][1] for k in seen)
     return {"닫힌 조회 칸": len(want), "ClickHouse에 있는 칸": len(seen),
-            "정답 총량": t_tot, "추정 총량": round(e_tot),
-            "추정 오차%": round((e_tot - t_tot) / t_tot * 100, 2) if t_tot else None,
-            "실제 통과율%": round(r_tot / t_tot * 100, 2) if t_tot else None}
+            "사라진 칸": len(missing),
+            "사라진 칸이 쥔 조회": t_missing,
+            "사라진 칸 비중%": round(t_missing / t_all * 100, 2) if t_all else None,
+            "정답 총량(전체)": t_all, "정답 총량(있는 칸)": t_seen, "추정 총량": round(e_tot),
+            "추정 오차%(있는 칸만, 낙관적)": round((e_tot - t_seen) / t_seen * 100, 2) if t_seen else None,
+            "추정 오차%(전체 정답 기준)": round((e_tot - t_all) / t_all * 100, 2) if t_all else None,
+            "실제 통과율%": round(r_tot / t_all * 100, 2) if t_all else None}
 
 
 def run(day: str, speed: str, capacity: float, burst: str | None) -> dict:
@@ -174,7 +191,7 @@ def run(day: str, speed: str, capacity: float, burst: str | None) -> dict:
     print("판단 기록 저장:", dumped, flush=True)
     out = {"speed": speed, "capacity_given": capacity, "burst": burst,
            "sent": sent, "적재": waited, "판단 기록 파일": dumped,
-           "제어기": rate_story(rows), "정확도": accuracy()}
+           "제어기": rate_story(rows), "정확도": accuracy(day)}
 
     # ---- ADR-0014 2단계: 그날 기록만으로 처리 능력 되찾기
     # 두 추정기를 함께 보고한다. 1초 방식은 실제 기록에서 거부당한다 (ADR-0017)
